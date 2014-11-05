@@ -1,23 +1,45 @@
 import theano
 import numpy
+from collections import OrderedDict
+FLOAT = theano.config.floatX
 
 
-class feedforwardNN():
+class feedforwardNN(object):
     def __init__(self, IL=100, HL=20, OL=5):
         self.IL = IL
         self.HL = HL
         self.OL = OL
-        self.inp = theano.tensor.dvector('inp')
-        self.inputlayer = numpy.zeros(IL)
-        self.hid = theano.tensor.dvector('hid')
-        self.hiddenlayer = numpy.zeros(HL)
-        self.out = theano.tensor.dvector('hid')
-        self.outputlayer = numpy.zeros(OL)
-        self.W1 = theano.tensor.dmatrix("w1")
-        self.W2 = theano.tensor.dmatrix("w2")
-        self.Connection1 = theano.function([self.inp], theano.dot(self.W1, self.inp))
-        self.Connection2 = theano.function([self.hid], theano.dot(self.W2, self.hid))
+        self.alfa = 0.008
+        arr = numpy.random.randn(HL, IL) / numpy.sqrt(HL + IL)
+        self.W1 = theano.shared(arr.astype(FLOAT), name='W1')
+        arr = numpy.random.randn(OL, HL) / numpy.sqrt(HL + OL)
+        self.W2 = theano.shared(arr.astype(FLOAT), name='W2')
 
-    def forwardP(self, input):
-        self.hiddenlayer = self.Connection1([input])
-        self.outputlayer = self.Connection2([self.hiddenlayer])
+        self.inp = theano.tensor.dvector('inp')
+        self.ans = theano.tensor.dvector('ans')
+        self.hid = theano.tensor.tanh(theano.dot(self.W1, self.inp))
+        self.out = theano.dot(self.W2, self.hid)
+        self.E = self.Cost()
+        self.gradients = self.set_grad()
+        self.comp = theano.function([self.inp, self.ans], self.E, updates=self.gradients)
+
+    def Cost(self):
+        diff = self.ans - self.out
+        error = theano.dot(diff.T, diff)/2
+        return error
+
+    def set_grad(self):
+        ret = OrderedDict()
+        ret[self.W1] = self.W1 + (self.alfa * theano.tensor.grad(self.E, self.W1)).astype(FLOAT)
+        ret[self.W2] = self.W2 + (self.alfa * theano.tensor.grad(self.E, self.W2)).astype(FLOAT)
+        return ret
+
+    def forwardP(self, input, ans):
+        return self.comp(input, ans)
+
+    def training(self, dataset):
+        for ans, inp in dataset:
+            self.forwardP(inp, ans)
+
+    def test(self, dataset):
+        print numpy.mean([self.forwardP(data) for data in dataset])
