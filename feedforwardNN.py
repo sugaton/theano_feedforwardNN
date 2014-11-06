@@ -6,10 +6,11 @@ FLOAT = theano.config.floatX
 
 
 class feedforwardNN(object):
-    def __init__(self, IL=100, HL=20, OL=5):
+    def __init__(self, IL=100, HL=20, OL=5, iter=2, hid_act="tanh", out_act="linear"):
         self.IL = IL
         self.HL = HL
         self.OL = OL
+        self.iter = iter
         self.alfa = 0.008
         arr = numpy.random.randn(HL, IL) / numpy.sqrt(HL + IL)
         self.W1 = theano.shared(arr.astype(FLOAT), name='W1')
@@ -19,11 +20,19 @@ class feedforwardNN(object):
 
         self.inp = theano.tensor.dvector('inp')
         self.ans = theano.tensor.dvector('ans')
-        self.hid = theano.tensor.tanh(theano.dot(self.W1, self.inp))
-        self.out = theano.dot(self.W2, self.hid)
+        hA = self.getfunc(hid_act)
+        oA = self.getfunc(out_act)
+        self.hid = hA(theano.dot(self.W1, self.inp))
+        self.out = oA(theano.dot(self.W2, self.hid))
         self.E = self.Cost()
         self.gradients = self.set_grad()
         self.comp = theano.function([self.inp, self.ans], self.E, updates=self.gradients)
+        self.comp2 = theano.function([self.inp], self.out)
+
+    @staticmethod
+    def getfunc(st):
+        dic = {"tanh": theano.tensor.tanh, "linear": (lambda x: x), "sigmoid": theano.tensor.nnet.sigmoid}
+        return dic[st]
 
     def Cost(self):
         diff = self.ans - self.out
@@ -40,11 +49,20 @@ class feedforwardNN(object):
         return self.comp(input, ans)
 
     def training(self, dataset):
-        for ans, inp in dataset:
-            self.forwardP(inp, ans)
+        for i in range(self.iter):
+            for ans, inp in dataset:
+                self.forwardP(inp, ans)
 
     def test(self, dataset):
         print numpy.mean([math.sqrt(2*self.forwardP(inp, ans)) for ans, inp in dataset])
+
+    def test_(self, dataset):
+        sum = 0
+        for ans, inp in dataset:
+            out = self.comp2(inp)
+            print ans, out
+            sum += out
+        print "average error: ", sum * 1.0 / len(dataset)
 
     def write_(self, filename):
         dic = {}
