@@ -13,6 +13,10 @@ def crossval(data):
 
 def main(*args):
     filename = args[1]
+    try:
+        ofilename = args[2]
+    except IndexError:
+        ofilename = 'temp'
     data = []
     with open(filename, 'r') as fin:
         for line in fin:
@@ -26,6 +30,7 @@ def main(*args):
     network = feedforwardNN.feedforwardNN(IL=19, HL=20, OL=1)
     network.training(data)
     network.test(test)
+    network.write(ofilename)
 
 if __name__ == "__main__":
     main(*sys.argv)
