@@ -44,7 +44,7 @@ class feedforwardNN(object):
             self.forwardP(inp, ans)
 
     def test(self, dataset):
-        print numpy.mean([math.sqrt(2*self.forwardP(data)) for data in dataset])
+        print numpy.mean([math.sqrt(2*self.forwardP(inp, ans)) for ans, inp in dataset])
 
     def write_(self, filename):
         dic = {}
