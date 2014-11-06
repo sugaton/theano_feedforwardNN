@@ -1,4 +1,5 @@
 import theano
+import math
 import numpy
 from collections import OrderedDict
 FLOAT = theano.config.floatX
@@ -14,7 +15,7 @@ class feedforwardNN(object):
         self.W1 = theano.shared(arr.astype(FLOAT), name='W1')
         arr = numpy.random.randn(OL, HL) / numpy.sqrt(HL + OL)
         self.W2 = theano.shared(arr.astype(FLOAT), name='W2')
-        self.params = {"W1":self.W1, "W2":self.W2}
+        self.params = {"W1": self.W1, "W2": self.W2}
 
         self.inp = theano.tensor.dvector('inp')
         self.ans = theano.tensor.dvector('ans')
@@ -43,12 +44,11 @@ class feedforwardNN(object):
             self.forwardP(inp, ans)
 
     def test(self, dataset):
-        print numpy.mean([self.forwardP(data) for data in dataset])
+        print numpy.mean([math.sqrt(2*self.forwardP(data)) for data in dataset])
 
     def write_(self, filename):
         dic = {}
-        for key,item in self.params.items():
+        for key, item in self.params.items():
             arr = item.get_value()
             dic[key] = arr
-        numpy.write(filename, **dic)
-
+        numpy.savez(filename, **dic)

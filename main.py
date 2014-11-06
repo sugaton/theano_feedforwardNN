@@ -30,7 +30,7 @@ def main(*args):
     network = feedforwardNN.feedforwardNN(IL=19, HL=20, OL=1)
     network.training(data)
     network.test(test)
-    network.write(ofilename)
+    network.write_(ofilename)
 
 if __name__ == "__main__":
     main(*sys.argv)
