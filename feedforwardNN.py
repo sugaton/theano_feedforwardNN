@@ -61,7 +61,7 @@ class feedforwardNN(object):
         for ans, inp in dataset:
             out = self.comp2(inp)
             print ans, out
-            sum += out
+            sum += sum - out
         print "average error: ", sum * 1.0 / len(dataset)
 
     def write_(self, filename):
