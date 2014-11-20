@@ -227,4 +227,7 @@ class segmenter(feedfowardNN.feedfowardNN):
         for x in xrange(buflen):
             viterbipath, maxnode, ans = self.getmaxpath(x)
             acc_(viterbipath, maxnode, ans)
+        precision = numpy.average([(X[i] / sum(X[i])) for i in range(self.OL)])
+        recall = numpy.average([(X[i] / sum(X.T[i])) for i in range(self.OL)])
+        return (2 * precision * recall) / (recall + precision)
 
