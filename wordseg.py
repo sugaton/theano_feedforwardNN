@@ -126,7 +126,7 @@ class segmenter(feedfowardNN.feedfowardNN):
         maxi = maxpath(prior, W)
         return [maxi[0] * X, maxi[1]]
 
-    def viterbi(self):
+
         [score, path], upd = theano.scan(fn=self.trans,
                                          outputs_info=[theano.tensor.ones_like(self.out[0]), None],
                                          sequences=[self.out],
@@ -171,7 +171,7 @@ class segmenter(feedfowardNN.feedfowardNN):
             buffersum = 0
             inputbuf = []
             ansbuf = []
-            for sent, ans in zip(inputdata, ansdata):
+            for sent, ans in data:
                 if (len(sent) + buffersum) > self.bufferlen:
                     buflen = self.replacedata(inputbuf, ansbuf)
                     for x in xrange(buflen):
