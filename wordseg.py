@@ -126,7 +126,7 @@ class segmenter(feedfowardNN.feedfowardNN):
         maxi = maxpath(prior, W)
         return [maxi[0] * X, maxi[1]]
 
-
+    def viterbi(self):
         [score, path], upd = theano.scan(fn=self.trans,
                                          outputs_info=[theano.tensor.ones_like(self.out[0]), None],
                                          sequences=[self.out],
