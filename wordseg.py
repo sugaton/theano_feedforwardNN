@@ -163,7 +163,7 @@ class segmenter(feedfowardNN.feedfowardNN):
         self.set(datarr, ansdata, idxarr)
         return len(idxarr)
 
-    def training(self, inputdata, ansdata):
+    def training(self, data):
         #inputdata: [sentence1, sentence2,..]
         #sentence: [array1, array2,..]
         #ansdata: [array1, array2,...]
