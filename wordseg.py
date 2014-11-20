@@ -33,13 +33,13 @@ class segmenter(feedfowardNN.feedfowardNN):
 
         self.setlayers()
         self.out = self.layers[-1]
-        self.maxscore, self.maxpath = self.viterbi()
+        self.maxscore, self.viterbipath, lastnode = self.viterbi()
         self.answerscore = self.calc_answer_score()
 
         self.E = self.answerscore - self.maxscore
         self.gradients = self.set_grad()
         self.comp = theano.function([self.idx], self.E, updates=self.gradients)
-        self.getmaxpath = theano.function([self.idx], self.maxpath)
+        self.getmaxpath = theano.function([self.idx], [self.viterbipath, lastnode, self.ans])
 
     def setData(self):
         self.datas_idx = theano.shared(numpy.zeros((bufferlen, 3)))
@@ -91,7 +91,7 @@ class segmenter(feedfowardNN.feedfowardNN):
         sent_len = self.inp.shape[0]
         ret, upd = theano.scan(fn=self.slice,
                                outputs_info=None,
-                               sequences=[theano.tensor.arange(2, sent_len-2)],
+                               sequences=[theano.tensor.arange(n, sent_len-n)],
                                non_sequences=[self.layers[-1], n])
         inputlayers, upd = theano.scan(fn=lambda x: theano.tensor.reshape(x, (self.IL, )),
                                        outputs_info=None,
@@ -112,7 +112,7 @@ class segmenter(feedfowardNN.feedfowardNN):
         self.parmas[name2] = b
 
     def setlayers(self):
-        self.setlayer(size=(self.N - 1 * self.IL, self.HL), name1="W1", name2="b1", act=self.hid_act)
+        self.setlayer(size=(self.IL, self.HL), name1="W1", name2="b1", act=self.hid_act)
         self.setlayer(size=(self.HL, self.OL), name1="W2", name2="b2", act=self.out_act)
 
     @staticmethod
@@ -122,16 +122,19 @@ class segmenter(feedfowardNN.feedfowardNN):
                                    outputs_info=None,
                                    sequences=[W.T],
                                    non_sequences=pri)
+            return theano.tensor.max_and_argmax(res, axis=1)
 
         maxi = maxpath(prior, W)
-        return [maxi[0] * X, maxi[1]]
+        return [maxi[0] + X, maxi[1]]
 
     def viterbi(self):
         [score, path], upd = theano.scan(fn=self.trans,
                                          outputs_info=[theano.tensor.ones_like(self.out[0]), None],
                                          sequences=[self.out],
                                          non_sequences=self.params['A'])
-        return (score, path)
+
+        maxscore, maxarg = theano.tensor.max_and_argmax(score[-1])
+        return (maxscore, path, maxarg)
 
     def calc_answer_score(self):
         def inner(x, OUT, prior, sumscore, W):
@@ -185,3 +188,43 @@ class segmenter(feedfowardNN.feedfowardNN):
             buflen = self.replacedata(inputbuf, ansbuf)
             for x in xrange(buflen):
                 self.comp(x)
+
+    @staticmethod
+    def trace_back(viterbipath, maxnode):
+        p_ = list(viterbipath)
+        p_.reverse()
+        rev_path = [maxnode]
+        for arr in p_:
+            rev_path.append(arr[rev_path[-1]])
+        rev_path.reverse()
+        return rev_path
+
+    def test_(self, dataset):
+        X = numpy.zeros((self.OL, self.OL))
+
+        def acc_(viterbipath, maxnode, ans):
+            out = self.trace_back(viterbipath, maxnode)
+            for a_, o_ in zip(list(ans), list(out)):
+                X[o_, a_] += 1
+
+        inputbuf = []
+        ansbuf = []
+        sum_ = 0
+        buffersum = 0
+        for sent, ans in dataset:
+            if (len(sent) + buffersum) > self.bufferlen:
+                buflen = self.replacedata(inputbuf, ansbuf)
+                for x in xrange(buflen):
+                    viterbipath, maxnode, ans = self.getmaxpath(x)
+                    acc_(viterbipath, maxnode, ans)
+                inputbuf = []
+                ansbuf = []
+                buffersum = 0
+            else:
+                inputbuf.append(sent)
+                ansbuf.append(ans)
+        buflen = self.replacedata(inputbuf, ansbuf)
+        for x in xrange(buflen):
+            viterbipath, maxnode, ans = self.getmaxpath(x)
+            acc_(viterbipath, maxnode, ans)
+
