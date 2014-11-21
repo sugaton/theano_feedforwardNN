@@ -27,7 +27,7 @@ class segmenter(feedfowardNN.feedfowardNN):
         self.params = OrderedDict()
         self.idx = theano.tensor.lscalar('idx')
 
-        self.setData()
+        self.setData(chardiclen)
         self.layers = [self.local_in]
         self.setlookup(V=chardiclen, d=char_d)
 
