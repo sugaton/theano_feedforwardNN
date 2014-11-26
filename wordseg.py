@@ -29,12 +29,8 @@ class segmenter(feedforwardNN.feedforwardNN):
         self.idx = theano.tensor.lscalar('idx')
 
         self.setData(chardiclen)
-<<<<<<< HEAD
         self.settransition()
         self.layers = []
-=======
-        self.layers = [self.local_in]
->>>>>>> 7f12259fc4eea2ef090831be5ed26889e693ab06
         self.setlookup(V=chardiclen, d=char_d)
         self.makeinputs(N=N)
 
