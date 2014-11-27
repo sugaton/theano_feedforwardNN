@@ -6,7 +6,7 @@ from collections import OrderedDict
 
 
 N = 5
-bufferlen = 100
+bufferlen = 500
 chardiclen = 100
 chard = 3
 IL = chard
@@ -73,19 +73,19 @@ for p in params:
     gr, _ = theano.scan(fn=lambda o_, a_, tidx, y: gradloop(o_, a_, tidx)+y,
                         outputs_info=[theano.tensor.zeros_like(p)],
                         sequences=[out, ans, theano.tensor.arange(o.shape[0])])
-    ret[p] = p + (0.01 * gr[-1])
+    ret[p] = p + ((0.01 * gr[-1])).astype("float32")
 upd = ret
 # def grad():
-inpdata = [random.randint(0,99) for i in range(60)]
-ansdata = [random.randint(0,3) for i in range(60)]
-idx_data = [[6*(i-1),6*i, 6*(i-1), 6*i] for i in range(1, 11)]
+inpdata = [random.randint(0,99) for i in range(300)]
+ansdata = [random.randint(0,3) for i in range(300)]
+idx_data = [[6*(i-1),6*i, 6*(i-1), 6*i] for i in range(1, 51)]
 set_(inpdata, ansdata, idx_data)
 # print datas_idx.get_value()
 f = theano.function([idxs], out, updates=upd)
 st = time.time()
-a = f(range(10))
+i=range(50)
+a= f(i)
 ed = time.time()
-print a
 print ed - st
 # print getdata(range(5))
 # print f(range(5))
