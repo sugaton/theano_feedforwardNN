@@ -1,0 +1,15 @@
+
+def setData(self):
+    self.datas_idx = theano.shared(numpy.zeros((bufferlen, 3)))
+    self.data = theano.shared(numpy.zeros((bufferlen, chardiclen), dtype=FLOAT), name="data")
+    self.data_ans = theano.shared(numpy.zeros(bufferlen, OL))
+    self.inp = self.data[self.datas_idx[self.idx][0]:self.datas_idx[self.idx][1]]
+    self.ans = self.data_ans[self.datas_idx[self.idx]]
+
+    d = theano.tensor.matrix()
+    d_ans = theano.tensor.matrix()
+    d_idx = theano.tensor.matrix()
+    u = (self.data, theano.tensor.set_subtensor(self.data, d))
+    u_ans = (self.data_ans, theano.tensor.set_subtensor(self.data_ans, d_ans))
+    u_idx = (self.data_ans, theano.tensor.set_subtensor(self.data_ans, d_idx))
+    self.set = theano.function([d, d_ans, d_idx], updates=[u, u_ans, u_idx])
