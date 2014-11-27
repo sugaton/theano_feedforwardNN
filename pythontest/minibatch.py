@@ -76,9 +76,10 @@ for p in params:
     ret[p] = p + ((0.01 * gr[-1])).astype("float32")
 upd = ret
 # def grad():
-inpdata = [random.randint(0,99) for i in range(300)]
-ansdata = [random.randint(0,3) for i in range(300)]
-idx_data = [[6*(i-1),6*i, 6*(i-1), 6*i] for i in range(1, 51)]
+size = 100
+inpdata = [random.randint(0, 99) for i in range(size*6)]
+ansdata = [random.randint(0, 3) for i in range(size*6)]
+idx_data = [[6*(i-1), 6*i, 6*(i-1), 6*i] for i in range(1, size+1)]
 set_(inpdata, ansdata, idx_data)
 # print datas_idx.get_value()
 f = theano.function([idxs], out, updates=upd)

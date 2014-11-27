@@ -94,7 +94,7 @@ u_idx = (datas_idx, theano.tensor.set_subtensor(datas_idx[:d_idx.shape[0]], d_id
 set_ = theano.function([d, d_ans, d_idx], updates=[u, u_ans, u_idx])
 
 #set data
-size = 50
+size = 100
 inpdata = [random.randint(0, 99) for i in range(size*6)]
 ansdata = [random.randint(0, 3) for i in range(size*6)]
 idx_data = [[6*(i-1), 6*i, 6*(i-1), 6*i] for i in range(1, size+1)]
