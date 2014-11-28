@@ -1,4 +1,5 @@
 import feedforwardNN
+import theano.tensor as T
 import math
 import numpy
 import theano
@@ -8,189 +9,257 @@ FLOAT = theano.config.floatX
 
 
 class segmenter(feedforwardNN.feedforwardNN):
-    def __init__(self, HL=300, OL=4, chardiclen=0, bufferlen=6000, char_d=50, N=5, iter=10, alfa=0.02, hid_act="tanh", out_act="softmax"):
+    class network:
+        def __init__(self, seg, idx, N=5):
+            self.seg = seg
+            self.R = self.get_rev_func()
+            i, a = self.seg.getdata(idx)
+            self.netS, self.tranS = self.setnet(i, a, N)
+
+        @property
+        def Scores(self):
+            return (self.netS, self.tranS)
+
+        @property
+        def count(self):
+            return self.count
+
+        @property
+        def viterbi_path(self):
+            return self.viterbi_path
+
+        def get_rev_func(self):
+            """
+            return matrix like bellow
+            0 0 1
+            0 1 0
+            1 0 0
+            """
+            L = self.seg.params['C'].get_value().shape[1]
+            arr = numpy.zeros((L, L))
+            for i in range(L):
+                arr[L-i-1] = 1
+            return theano.shared(arr.astype(FLOAT), name="rev")
+
+        def lookup(self, C, inp):
+            result, updates = theano.scan(fn=lambda x: C[x],
+                                          outputs_info=None,
+                                          sequences=[inp])
+            return result
+
+        @staticmethod
+        def slice(i, X, N=5):
+            """
+            # concatenate N embeddings
+            """
+            n = N / 2
+            return T.reshape(X[i-n:i+n+1], (X.shape[0]*N, ))
+
+        def makeinputs(self, N, inp, embeddings):
+            """
+            return concatenated input
+            """
+            n = N / 2
+            sent_len = inp.shape[0]
+            ret, upd = theano.scan(fn=self.slice,
+                                   outputs_info=None,
+                                   sequences=[T.arange(n, sent_len-n)],
+                                   non_sequences=[embeddings, N])
+            return ret
+
+        @staticmethod
+        def getfunc(st):
+            """
+            return activation function, given by string
+            """
+            dic = {}
+            dic["tanh"] = T.tanh
+            dic["linear"] = (lambda x: x)
+            dic["sigmoid"] = T.nnet.sigmoid
+            dic["softmax"] = T.nnet.softmax
+            return dic[st]
+
+        def setlayers(self, inputl):
+            """
+            set network
+            """
+            def setlayer(self, inputl, size=(0, 0), name1="w", name2="b", act="sigmoid"):
+                w = self.seg.params[name1]
+                b = self.seg.params[name2]
+                a = theano.dot(inputl, w) + b
+                activate = self.getfunc(act)
+                o = activate(a)
+                return o
+
+            l1 = setlayer(inputl, size=(self.seg.IL, self.seg.HL), name1="W1", name2="b1", act=self.seg.hid_act)
+            return setlayer(l1, size=(self.seg.HL, self.seg.OL), name1="W2", name2="b2", act=self.seg.out_act)
+
+        def trace_back_(self, path, maxnode):
+            path_rev = theano.dot(self.R, path)
+            [_, path_ret], _ = theano.scan(fn=lambda x, i: [x[i], i],
+                                           outputs_info=[maxnode, None],
+                                           sequences=[path_rev])
+            ret = theano.dot(self.R, path_ret)
+            return ret
+
+        @staticmethod
+        def trans(X, prior, W):
+            def maxpath(pri, W):
+                res = pri + W.T
+                return T.max_and_argmax(res, axis=1)
+
+            maxi = maxpath(prior, W)
+            return [maxi[0] + X, maxi[1]]
+
+        def viterbi(self, outputs):
+            """
+            get viterbi scores and path
+            """
+            [score, path], upd = theano.scan(fn=self.trans,
+                                             outputs_info=[T.zeros_like(outputs[0]), self.startnode],
+                                             sequences=[outputs],
+                                             non_sequences=self.seg.params['A'])
+
+            maxscore, maxarg = T.max_and_argmax(score[-1])
+            return self.trace_back_(path, maxarg)
+
+        def setnet(self, inp, ans, N):
+            embeddings = self.lookup(self.seg.params['C'], inp)
+            inputs = self.makeinputs(N, inp, embeddings)
+            outputs = self.setlayers(inputs)
+            out = self.viterbi(outputs)
+            dif = theano.tensor.neq(ans, out)
+            aS = theano.tensor.sum(outputs[theano.tensor.arange(outputs.shape[0]), ans] * dif)
+            oS = theano.tensor.sum(outputs[theano.tensor.arange(outputs.shape[0]), out] * dif)
+            itr = (dif > 0).nonzero()
+            itr = itr(itr.nonzero())
+            transdif = theano.tensor.sum(self.seg.params['A'][itr-1, itr])
+            self.viterbi_path = out
+            self.count = T.sum(self.seg.X[out, ans])
+            return (aS - oS, transdif)
+
+    # class init
+    def __init__(self,
+                 HL=300,
+                 OL=4,
+                 chardiclen=0,
+                 bufferlen=6000,
+                 char_d=50,
+                 N=5,
+                 iter=10,
+                 initupper=0.01,
+                 batchsize=20,
+                 alfa=0.02,
+                 hid_act="tanh",
+                 out_act="softmax"):
         """
-        input is a matrix which rows are one-hot representation of character.
-        then, the input-matrix's size is
-            (sentence-length:N, all-character-num:V) [ V * N ].
-        self.ans is a tag sequence of correct answer. each tag is described as indexnumber
         """
+        args = locals()
+        args.pop("self")
+        self.__dict__.update(args)
+
         self.IL = char_d * N
-        self.HL = HL
-        self.OL = OL
-        self.iter = iter
-        self.alfa = alfa
-        self.hid_act = hid_act
-        self.out_act = out_act
-        self.bufferlen = bufferlen
+        self.alfa = numpy.float32(alfa)
 
         self.params = OrderedDict()
         self.params_v = OrderedDict()
-        self.idx = theano.tensor.lscalar('idx')
+        self.idxs = T.lvector('idxs')
 
-        self.setData(chardiclen)
-        self.settransition()
-        self.layers = []
-        self.setlookup(V=chardiclen, d=char_d)
-        self.makeinputs(N=N)
+        self.setparams(chardiclen, char_d)
+        self.setnetworks()
 
-        self.setlayers()
-        self.out = self.layers[-1]
-        self.maxscore, self.viterbipath, lastnode = self.viterbi()
-        self.maxpath = self.trace_back_(self.viterbipath, lastnode).astype("int64")
+    def getdata(self, idx):
+        idx0 = self.datas_idx[idx][0].astype("int64")
+        idx1 = self.datas_idx[idx][1].astype("int64")
+        idx2 = self.datas_idx[idx][2].astype("int64")
+        idx3 = self.datas_idx[idx][3].astype("int64")
+        return (self.data[idx0:idx1], self.data_ans[idx2:idx3])
 
-        self.gradients = self.set_grad()
+    def setparams(self, chardiclen, char_d):
+        def setdata(chardiclen):
+            """
+            define datas and give the set function
+            """
+            self.datas_idx = theano.shared(numpy.zeros((self.bufferlen, 4)))
+            self.data = theano.shared(numpy.zeros((self.bufferlen, ), dtype="int64"), name="data")
+            self.data_ans = theano.shared(numpy.zeros((self.bufferlen,)))
+            idx0 = self.datas_idx[self.idx][0].astype("int64")
+            idx1 = self.datas_idx[self.idx][1].astype("int64")
+            idx2 = self.datas_idx[self.idx][2].astype("int64")
+            idx3 = self.datas_idx[self.idx][3].astype("int64")
+            self.inp = self.data[idx0:idx1].astype("int64")
+            self.ans = self.data_ans[idx2:idx3].astype("int64")
 
-        self.comp = theano.function([self.idx], [self.out, self.maxpath], updates=self.gradients)
-        self.getdata = theano.function([self.idx], [self.inp, self.ans])
-        self.getlayers = theano.function([self.idx], [self.out, self.viterbipath, lastnode])
-        self.getmaxpath = theano.function([self.idx], [self.maxpath, self.ans])
+            d = T.lvector()
+            d_ans = T.lvector()
+            d_idx = T.lmatrix()
+            u = (self.data, T.set_subtensor(self.data[:d.shape[0]], d))
+            u_ans = (self.data_ans, T.set_subtensor(self.data_ans[:d_ans.shape[0]], d_ans))
+            u_idx = (self.datas_idx, T.set_subtensor(self.datas_idx[:d_idx.shape[0]], d_idx))
+            self.set = theano.function([d, d_ans, d_idx], updates=[u, u_ans, u_idx])
 
-    def setData(self, chardiclen):
-        self.datas_idx = theano.shared(numpy.zeros((self.bufferlen, 4)))
-        self.data = theano.shared(numpy.zeros((self.bufferlen, ), dtype="int64"), name="data")
-        self.data_ans = theano.shared(numpy.zeros((self.bufferlen,)))
-        idx0 = self.datas_idx[self.idx][0].astype("int64")
-        idx1 = self.datas_idx[self.idx][1].astype("int64")
-        idx2 = self.datas_idx[self.idx][2].astype("int64")
-        idx3 = self.datas_idx[self.idx][3].astype("int64")
-        self.inp = self.data[idx0:idx1].astype("int64")
-        self.ans = self.data_ans[idx2:idx3].astype("int64")
-
-        d = theano.tensor.lvector()
-        d_ans = theano.tensor.lvector()
-        d_idx = theano.tensor.lmatrix()
-        u = (self.data, theano.tensor.set_subtensor(self.data[:d.shape[0]], d))
-        u_ans = (self.data_ans, theano.tensor.set_subtensor(self.data_ans[:d_ans.shape[0]], d_ans))
-        u_idx = (self.datas_idx, theano.tensor.set_subtensor(self.datas_idx[:d_idx.shape[0]], d_idx))
-        self.set = theano.function([d, d_ans, d_idx], updates=[u, u_ans, u_idx])
-
-    def settransition(self):
-        arr = numpy.random.randn(self.OL, self.OL) / numpy.sqrt(2 * self.OL)
-        A = theano.shared(arr.astype(FLOAT), name="A")
-        self.params["A"] = A
-        self.params_v["A"] = theano.tensor.matrix()
-
-    def lookup(self, C):
-        result, updates = theano.scan(fn=lambda x: C[x],
-                                      outputs_info=None,
-                                      sequences=[self.inp])
-        return result
-
-    def setlookup(self, V=1, d=1):
-        arr = numpy.random.randn(V, d) / numpy.sqrt(V + d)
-        C = theano.shared(arr.astype(FLOAT), name="C")
-        self.params["C"] = C
-        self.params_v["C"] = theano.tensor.matrix()
-        inputlayer = self.lookup(self.params["C"])
-        self.layers.append(inputlayer)
-
-    def set_grad(self):
-        ret = OrderedDict()
-        for key, v in self.params.items():
-            if key == "A":
-                [__, r1] , _ = theano.scan(fn=lambda i,p,y: [i, theano.grad(v[p,i],v)+y], outputs_info=[theano.tensor.zeros_like(self.ans[0]), theano.tensor.zeros_like(v)], sequences=[self.ans])
-                [__, r] , _ = theano.scan(fn=lambda i,p,y: [i, theano.grad(-1*v[p,i],v)+y], outputs_info=[theano.tensor.zeros_like(self.ans[0]), r1[-1]], sequences=[self.maxpath])
-                ret[v] = v + (self.alfa * r[-1]).astype(FLOAT)
+        def setparam(size1, size2=None, name=""):
+            upper = self.initupper
+            if size2 is None:
+                shape = (size1)
+                variable = T.vector()
             else:
-                o = self.out
-                grads, _ = theano.scan(fn=lambda i,j,k,y: theano.grad(o[i,j]-o[i,k],v)+y, outputs_info=theano.tensor.zeros_like(v),sequences=[theano.tensor.arange(self.ans.shape[0]), self.ans, self.maxpath])
-                ret[v] = v + (self.alfa * grads[-1]).astype(FLOAT)
+                shape = (size1, size2)
+                variable = T.matrix()
+            arr = numpy.random.uniform(-upper, upper, shape)
+            self.params[name] = theano.shared(arr.astype(FLOAT), name=name)
+            self.params_v[name] = variable
 
-        return ret
+        setdata(chardiclen)
+        #  transition score
+        setparam(self.OL, self.OL, name="A")
+        #  set lookup
+        setparam(chardiclen, char_d, name="C")
+        #  set weight and bias
+        setparam(self.IL, self.HL, name="W1")
+        setparam(self.HL, name="b1")
+        setparam(self.HL, self.OL, name="W2")
+        setparam(self.OL, name="b2")
 
-    @staticmethod
-    def getfunc(st):
-        def softmax_(X):
-            result, updates = theano.scan(fn=lambda x: theano.tensor.reshape(theano.tensor.nnet.softmax(x), (x.shape[0], )),
-                                          outputs_info=None,
-                                          sequences=[dict(input=X)])
-            return result
-        dic = {}
-        dic["tanh"] = theano.tensor.tanh
-        dic["linear"] = (lambda x: x)
-        dic["sigmoid"] = theano.tensor.nnet.sigmoid
-        dic["softmax"] = softmax_
-        return dic[st]
-
-    @staticmethod
-    def slice(i, X, N=2):
-        return X[i-N:i+N+1]
-
-    def makeinputs(self, N=5):
-        n = N / 2
-        sent_len = self.inp.shape[0]
-        ret, upd = theano.scan(fn=self.slice,
-                               outputs_info=None,
-                               sequences=[theano.tensor.arange(n, sent_len-n)],
-                               non_sequences=[self.layers[-1], n])
-        inputlayers, upd = theano.scan(fn=lambda x: theano.tensor.reshape(x, (self.IL, )),
-                                       outputs_info=None,
-                                       sequences=[ret])
-        self.layers.append(inputlayers)
-
-    def setlayer(self, size=(0, 0), name1="w", name2="b", act="sigmoid"):
-        arr = numpy.random.randn(size[0], size[1]) / numpy.sqrt(size[0] + size[1])
-        w = theano.shared(arr.astype(FLOAT), name=name1)
-        arr = numpy.random.randn(size[1]) / numpy.sqrt(size[1])
-        b = theano.shared(arr.astype(FLOAT), name=name2)
-        a = theano.dot(self.layers[-1], w) + b
-        activate = self.getfunc(act)
-        o = activate(a)
-        self.layers.append(a)
-        self.layers.append(o)
-        self.params[name1] = w
-        self.params[name2] = b
-        self.params_v[name1] = theano.tensor.matrix()
-        self.params_v[name2] = theano.tensor.vector()
-
-    def setlayers(self):
-        self.setlayer(size=(self.IL, self.HL), name1="W1", name2="b1", act=self.hid_act)
-        self.setlayer(size=(self.HL, self.OL), name1="W2", name2="b2", act=self.out_act)
-
-    @staticmethod
-    def trans(X, prior, W):
-        def maxpath(pri, W):
-            res, upd = theano.scan(fn=lambda x, y: x + y,
-                                   outputs_info=None,
-                                   sequences=[W.T],
-                                   non_sequences=pri)
-            return theano.tensor.max_and_argmax(res, axis=1)
-
-        maxi = maxpath(prior, W)
-        return [maxi[0] + X, maxi[1]]
-
-    def viterbi(self):
-        # return max path and its score
-        [score, path], upd = theano.scan(fn=self.trans,
-                                         outputs_info=[theano.tensor.ones_like(self.out[0]), None],
-                                         sequences=[self.out],
-                                         non_sequences=self.params['A'])
-
-        maxscore, maxarg = theano.tensor.max_and_argmax(score[-1])
-        return (maxscore, path, maxarg)
-
-    def calc_answer_score(self):
-        # return self.ans 's score
-        def inner(x, OUT, prior, sumscore, W):
-            return [x, sumscore + W[prior, x] + OUT[x]]
-        res, upd = theano.scan(fn=lambda x, y: x + y,
-                               outputs_info=None,
-                               sequences=[self.params['A'].T],
-                               non_sequences=theano.tensor.ones_like(self.out[0]))
-        res_ = theano.tensor.max(res,axis=1)
-        score1 = res_[self.ans[0].astype("int64")]
-        startscore = score1 + self.out[0][self.ans[0].astype("int64")]
-        [_, score], upd = theano.scan(fn=inner,
-                                      outputs_info=[self.ans[0].astype("int64"), startscore],
-                                      sequences=[self.ans[1:].astype("int64"), self.out[1:]],
-                                      non_sequences=self.params['A'])
-        return score[-1]
+    def set_batch_networks(self):
+        """
+        construct networks for batch
+        """
+        self.X = theano.shared(numpy.zeros((self.OL, self.OL)))
+        nets = range(self.batchsize)
+        net_S = []
+        trans_S = []
+        match_count = []
+        for i in xrange(self.batchsize):
+            nets[i] = self.network(self, self.idxs[i], N=self.N)
+            ns, ts = nets[i].Scores
+            # append score variables for sum
+            net_S.append(ns)
+            trans_S.append(ts)
+            match_count.append(nets[i].count)
+        # transition score updates
+        trans_p = [self.params["A"]]
+        trans_grad = theano.grad(T.sum(trans_S), trans_p)
+        trans_upd = [(p, p + self.alfa * g) for p, g in zip(trans_p, trans_grad)]
+        # network parameters update
+        net_p = [p for k, p in self.params.items() if k != "A"]
+        net_grad = theano.grad(T.sum(net_S), net_p)
+        net_upd = [(p, p + self.alfa * g) for p, g in zip(net_p, net_grad)]
+        # training function
+        upd = trans_upd + net_upd
+        self.learn = theano.function([self.idxs], updates=upd)
+        #  counting function for test
+        test_g = theano.grad(T.sum(match_count), self.X)
+        test_upd = [(self.X, self.X + test_g)]
+        self.test = theano.function([self.idxs], updates=test_upd)
 
     def replacedata(self, inputdata, anslist):
-        #inputdata: [ sentence1, sentence2,...]
-        #sentence: [array1, array2,..]
-        #ansdata: [array1, array2,...]
+        """
+        copy data to gpu memory
+
+        given: inputdata, anslist -- [sent1, sent2, ...],[ans1, ans2, ...]
+        return: length of self.datas_idx
+        """
         datarr = []
         ansdata = []
         idxarr = []
@@ -213,32 +282,38 @@ class segmenter(feedforwardNN.feedforwardNN):
         self.set(datarr, ansdata, idxarr)
         return len(idxarr)
 
-    def error_handle(self, e):
-        print "Error:"
+    def error_handle(self, e, idxlist):
+        print "error:"
         print "type:", str(type(e))
-        print self.getdata(x)
         print "args:", str(e.args)
-        inp,ans =  self.getdata(x)
-        print inp, ans
-        layers = self.getlayers(x)
-        print layers
 
     def training(self, data):
-        #inputdata: [sentence1, sentence2,..]
-        #sentence: [array1, array2,..]
-        #ansdata: [array1, array2,...]
-        def learn(x):
-            inp, ans = self.getdata(x)
-            out,path = self.comp(x)
-        allsize = sum([len(sent) for sent,_ in data])
+        """
+        training parameters from data
+
+        given: data -- [(sent, ans), ...]
+            # sent: character index list of a sentence
+            # ans : tag index list of a sequence answer
+        return: -
+        """
+        def learn_(buflen):
+            L = range(buflen)
+            for x in xrange(buflen / self.batchsize):
+                start = x * self.batchsize
+                end = (x + 1) * self.batchsize
+                if end > buflen:
+                    end = buflen
+                self.learn(L[start:end])
+
+        allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
         if allin:
-            inputbuf = [sent for sent,_ in data]
-            ansbuf = [ans for _,ans in data]
+            inputbuf = [sent for sent, _ in data]
+            ansbuf = [ans for _, ans in data]
             buflen = self.replacedata(inputbuf, ansbuf)
             for i in range(self.iter):
-                for x in xrange(buflen):
-                    learn(x)
+                learn_(buflen)
+        # if data can't be set on gpu memory once
         else:
             for i in range(self.iter):
                 buffersum = 0
@@ -247,11 +322,10 @@ class segmenter(feedforwardNN.feedforwardNN):
                 for sent, ans in data:
                     if (len(sent) + buffersum) > self.bufferlen:
                         buflen = self.replacedata(inputbuf, ansbuf)
-                        for x in xrange(buflen):
-                            try:
-                                learn(x)
-                            except Exception as e:
-                                self.error_handle(e)
+                        try:
+                            learn_(buflen)
+                        except Exception as e:
+                            self.error_handle(e)
                         inputbuf = [sent]
                         ansbuf = [ans]
                         buffersum = len(sent)
@@ -260,38 +334,28 @@ class segmenter(feedforwardNN.feedforwardNN):
                         ansbuf.append(ans)
                         buffersum += len(sent)
                 buflen = self.replacedata(inputbuf, ansbuf)
-                for x in xrange(buflen):
-                    try:
-                        learn(x)
-                    except Exception as e:
-                        self.error_handle(e)
-
-    @staticmethod
-    def trace_back(viterbipath, maxnode):
-        p_ = list(viterbipath)
-        p_.reverse()
-        rev_path = [maxnode]
-        for arr in p_:
-            rev_path.append(arr[rev_path[-1]])
-        rev_path.reverse()
-        return rev_path
-
-    @staticmethod
-    def trace_back_(path, maxnode):
-        rev_arange =  -1*theano.tensor.arange(-1*path.shape[0]+1, 1)
-        path_rev, _ = theano.scan(fn=lambda i: path[i], sequences=[rev_arange])
-        [_,path_ret], _ = theano.scan(fn = lambda x,i: [x[i], i],outputs_info=[maxnode, None], sequences=[path_rev])
-        rev_arange =  -1*theano.tensor.arange(-1*path_ret.shape[0]+1, 1)
-        ret, _ = theano.scan(fn=lambda i: path_ret[i], sequences=[rev_arange])
-        return ret
+                try:
+                    learn_(buflen)
+                except Exception as e:
+                    self.error_handle(e)
 
     def test_(self, dataset):
-        X = numpy.zeros((self.OL, self.OL))
+        """
+        given: dataset -- [(sent, ans), ...]
+            # sent: character index list of a sentence
+            # ans : tag index list of a sequence answer
 
-        def acc_(out, ans):
-            print a_, o_
-            for a_, o_ in zip(list(ans), list(out)):
-                X[o_, a_] += 1
+        return: F-score
+        """
+        def acc_(buflen):
+            L = range(buflen)
+            for x in xrange(buflen / self.batchsize):
+                start = x * self.batchsize
+                end = (x + 1) * self.batchsize
+                if end > buflen:
+                    end = buflen
+                acc_(range(buflen)[start:end])
+                self.test(L[start:end])
 
         inputbuf = []
         ansbuf = []
@@ -300,38 +364,38 @@ class segmenter(feedforwardNN.feedforwardNN):
         for sent, ans in dataset:
             if (len(sent) + buffersum) > self.bufferlen:
                 buflen = self.replacedata(inputbuf, ansbuf)
-                for x in xrange(buflen):
-                    out, ans = self.getmaxpath(x)
-                    acc_(out, ans)
-                inputbuf = []
-                ansbuf = []
-                buffersum = 0
+                try:
+                    acc_(buflen)
+                except Exception as e:
+                    self.error_handle(e)
+                inputbuf = [sent]
+                ansbuf = [ans]
+                buffersum = len(sent)
             else:
                 inputbuf.append(sent)
                 ansbuf.append(ans)
         buflen = self.replacedata(inputbuf, ansbuf)
-        for x in xrange(buflen):
-            try:
-                out, ans = self.getmaxpath(x)
-                acc_(out, ans)
-            except Exception as e:
-                print "Error:"
-                print "type:", str(type(e))
-                print "args:", str(e.args)
-                print self.getdata(x)
-        precision = numpy.average([(X[i] / sum(X[i])) for i in range(self.OL)])
-        recall = numpy.average([(X[i] / sum(X.T[i])) for i in range(self.OL)])
-        print X
+        try:
+            acc_(buflen)
+        except Exception as e:
+            self.error_handle(e)
+        # calculate F-score
+        x = self.X.get_value()
+        precision = numpy.average([(x[i] / sum(x[i]) if sum(x[i]) != 0 else 0) for i in range(self.OL)])
+        recall = numpy.average([(x[i] / sum(x.t[i]) if sum(x.t[i]) != 0 else 0) for i in range(self.OL)])
+        print x
         return (2 * precision * recall) / (recall + precision)
 
     def load_param(self, filename):
+        """
+            loading parameters from .npz file
+        """
         setfunc = {}
         npzfile = numpy.load(filename)
         for key in npzfile.keys():
             variable = self.params_v[key]
             arr = self.params[key]
-            sets = (arr, theano.tensor.set_subtensor(arr[:], variable))
+            sets = (arr, T.set_subtensor(arr[:], variable))
             setfunc[key] = theano.function([variable], updates=[sets])
         for key, arr in npzfile.items():
             setfunc[key](arr)
-
