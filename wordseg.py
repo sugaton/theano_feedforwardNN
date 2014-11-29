@@ -12,6 +12,7 @@ class segmenter(object):
         def __init__(self, seg, idx, N=5):
             self.seg = seg
             i, a = self.seg.getdata(idx)
+            self.ans = a
             netS, tranS = self.setnet(i, a, N)
             # if idx == NULL
             cond = T.eq(self.seg.NULL, idx)
@@ -27,8 +28,8 @@ class segmenter(object):
             return self.count
 
         @property
-        def viterbi_path(self):
-            return self.viterbi_path
+        def ans_out(self):
+            return (self.ans, self.viterbi_path)
 
         def lookup(self, C, inp):
             result, updates = theano.scan(fn=lambda x: C[x],
@@ -221,6 +222,7 @@ class segmenter(object):
         net_S = []
         trans_S = []
         match_count = []
+        sys_out = []
         for i in xrange(self.batchsize):
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
             ns, ts = self.nets[i].Scores
@@ -228,6 +230,7 @@ class segmenter(object):
             net_S.append(ns)
             trans_S.append(ts)
             match_count.append(self.nets[i].count)
+            sys_out.append(self.nets[i].ans_out)
         # transition score updates
         trans_p = [self.params["A"]]
         trans_grad = theano.grad(T.sum(trans_S), trans_p)
@@ -239,6 +242,7 @@ class segmenter(object):
         # training function
         upd = trans_upd + net_upd
         self.learn = theano.function([self.idxs], updates=upd)
+        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -271,7 +275,7 @@ class segmenter(object):
         print ansdata.shape
         print idxarr.shape
         self.set(datarr, ansdata, idxarr)
-        return len(idxarr)
+        return len(idxarr
 
     def error_handle(self, e, idxlist):
         print "error:"
@@ -297,12 +301,16 @@ class segmenter(object):
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
+                    # self.learn(L_)
+                    outs = self.learn_with_out(L_)
                 else:
-                    self.learn(L[start:end])
-                # for  debug
-                out = self.system_out(L[start:end])
-                for o in out:
-                    print o
+                    # self.learn(L[start:end])
+                    outs = self.learn_with_out(L[start:end])
+                # for debug
+                for ans, out in outs:
+                    print ""
+                    print("ans:", ans)
+                    print("out:", out)
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
