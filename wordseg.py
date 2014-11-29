@@ -275,9 +275,9 @@ class segmenter(object):
         print ansdata.shape
         print idxarr.shape
         self.set(datarr, ansdata, idxarr)
-        return len(idxarr
+        return len(idxarr)
 
-    def error_handle(self, e, idxlist):
+    def error_handle(self, e):
         print "error:"
         print "type:", str(type(e))
         print "args:", str(e.args)
