@@ -1,6 +1,4 @@
-import feedforwardNN
 import theano.tensor as T
-import math
 import numpy
 import theano
 from collections import OrderedDict
@@ -8,7 +6,7 @@ from collections import OrderedDict
 FLOAT = theano.config.floatX
 
 
-class segmenter(feedforwardNN.feedforwardNN):
+class segmenter(object):
     class network:
         def __init__(self, seg, idx, N=5):
             self.seg = seg
@@ -359,7 +357,6 @@ class segmenter(feedforwardNN.feedforwardNN):
 
         inputbuf = []
         ansbuf = []
-        sum_ = 0
         buffersum = 0
         for sent, ans in dataset:
             if (len(sent) + buffersum) > self.bufferlen:
@@ -399,3 +396,10 @@ class segmenter(feedforwardNN.feedforwardNN):
             setfunc[key] = theano.function([variable], updates=[sets])
         for key, arr in npzfile.items():
             setfunc[key](arr)
+
+    def write_(self, filename):
+        dic = {}
+        for key, item in self.params.items():
+            arr = item.get_value()
+            dic[key] = arr
+        numpy.savez(filename, **dic)
