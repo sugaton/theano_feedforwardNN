@@ -223,6 +223,7 @@ class segmenter(object):
         trans_S = []
         match_count = []
         sys_out = []
+        ans_s = []
         for i in xrange(self.batchsize):
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
             ns, ts = self.nets[i].Scores
@@ -230,7 +231,9 @@ class segmenter(object):
             net_S.append(ns)
             trans_S.append(ts)
             match_count.append(self.nets[i].count)
-            sys_out.append(self.nets[i].ans_out)
+            a_, o_ = self.nets[i].ans_out
+            ans_s.append(a_)
+            sys_out.append(o_)
         # transition score updates
         trans_p = [self.params["A"]]
         trans_grad = theano.grad(T.sum(trans_S), trans_p)
@@ -242,7 +245,7 @@ class segmenter(object):
         # training function
         upd = trans_upd + net_upd
         self.learn = theano.function([self.idxs], updates=upd)
-        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], [ans_s, sys_out], updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -276,7 +279,6 @@ class segmenter(object):
         print idxarr.shape
         self.set(datarr, ansdata, idxarr)
         return len(idxarr)
-
     def error_handle(self, e):
         print "error:"
         print "type:", str(type(e))
@@ -305,9 +307,9 @@ class segmenter(object):
                     outs = self.learn_with_out(L_)
                 else:
                     # self.learn(L[start:end])
-                    outs = self.learn_with_out(L[start:end])
+                    anss, outs = self.learn_with_out(L[start:end])
                 # for debug
-                for ans, out in outs:
+                for ans, out in zip(anss,outs):
                     print ""
                     print("ans:", ans)
                     print("out:", out)
