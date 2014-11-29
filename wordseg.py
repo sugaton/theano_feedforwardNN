@@ -164,7 +164,7 @@ class segmenter(object):
         self.idxs = T.lvector('idxs')
 
         self.setparams(chardiclen, char_d)
-        self.setnetworks()
+        self.set_batch_networks()
 
     def getdata(self, idx):
         idx0 = self.datas_idx[idx][0].astype("int64")
@@ -224,17 +224,17 @@ class segmenter(object):
         construct networks for batch
         """
         self.X = theano.shared(numpy.zeros((self.OL, self.OL)))
-        nets = range(self.batchsize)
+        self.nets = range(self.batchsize)
         net_S = []
         trans_S = []
         match_count = []
         for i in xrange(self.batchsize):
-            nets[i] = self.network(self, self.idxs[i], N=self.N)
-            ns, ts = nets[i].Scores
+            self.nets[i] = self.network(self, self.idxs[i], N=self.N)
+            ns, ts = self.nets[i].Scores
             # append score variables for sum
             net_S.append(ns)
             trans_S.append(ts)
-            match_count.append(nets[i].count)
+            match_count.append(self.nets[i].count)
         # transition score updates
         trans_p = [self.params["A"]]
         trans_grad = theano.grad(T.sum(trans_S), trans_p)
@@ -250,6 +250,10 @@ class segmenter(object):
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
         self.test = theano.function([self.idxs], updates=test_upd)
+
+    @property
+    def system_out(self):
+        return theano.function([self.idxs], [net.viterbi_path for net in self.nets])
 
     def replacedata(self, inputdata, anslist):
         """
@@ -302,6 +306,12 @@ class segmenter(object):
                 if end > buflen:
                     end = buflen
                 self.learn(L[start:end])
+                """
+                # for  debug
+                out = self.system_out(L[start:end])
+                for o in out:
+                    print o
+                """
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
