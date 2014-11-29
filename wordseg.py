@@ -2,6 +2,7 @@ import theano.tensor as T
 import numpy
 import theano
 from collections import OrderedDict
+from theano import ifelse
 
 FLOAT = theano.config.floatX
 
@@ -10,9 +11,12 @@ class segmenter(object):
     class network:
         def __init__(self, seg, idx, N=5):
             self.seg = seg
-            self.R = self.get_rev_func()
             i, a = self.seg.getdata(idx)
-            self.netS, self.tranS = self.setnet(i, a, N)
+            netS, tranS = self.setnet(i, a, N)
+            # if idx == NULL
+            cond = T.eq(self.seg.NULL, idx)
+            self.netS = ifelse.ifelse(cond, self.seg.ZERO, netS)
+            self.tranS = ifelse.ifelse(cond, self.seg.ZERO, tranS)
 
         @property
         def Scores(self):
@@ -26,19 +30,6 @@ class segmenter(object):
         def viterbi_path(self):
             return self.viterbi_path
 
-        def get_rev_func(self):
-            """
-            return matrix like bellow
-            0 0 1
-            0 1 0
-            1 0 0
-            """
-            L = self.seg.params['C'].get_value().shape[1]
-            arr = numpy.zeros((L, L))
-            for i in range(L):
-                arr[L-i-1] = 1
-            return theano.shared(arr.astype(FLOAT), name="rev")
-
         def lookup(self, C, inp):
             result, updates = theano.scan(fn=lambda x: C[x],
                                           outputs_info=None,
@@ -51,7 +42,7 @@ class segmenter(object):
             # concatenate N embeddings
             """
             n = N / 2
-            return T.reshape(X[i-n:i+n+1], (X.shape[0]*N, ))
+            return T.reshape(X[i-n:i+n+1], (X.shape[1]*N, ))
 
         def makeinputs(self, N, inp, embeddings):
             """
@@ -81,7 +72,7 @@ class segmenter(object):
             """
             set network
             """
-            def setlayer(self, inputl, size=(0, 0), name1="w", name2="b", act="sigmoid"):
+            def setL(inputl, name1="w", name2="b", act="sigmoid"):
                 w = self.seg.params[name1]
                 b = self.seg.params[name2]
                 a = theano.dot(inputl, w) + b
@@ -89,15 +80,17 @@ class segmenter(object):
                 o = activate(a)
                 return o
 
-            l1 = setlayer(inputl, size=(self.seg.IL, self.seg.HL), name1="W1", name2="b1", act=self.seg.hid_act)
-            return setlayer(l1, size=(self.seg.HL, self.seg.OL), name1="W2", name2="b2", act=self.seg.out_act)
+            l1 = setL(inputl, name1="W1", name2="b1", act=self.seg.hid_act)
+            return setL(l1, name1="W2", name2="b2", act=self.seg.out_act)
 
         def trace_back_(self, path, maxnode):
-            path_rev = theano.dot(self.R, path)
+            n = path.shape[1]
+            path_rev = path[:, n - T.arange(n) - 1]
             [_, path_ret], _ = theano.scan(fn=lambda x, i: [x[i], i],
                                            outputs_info=[maxnode, None],
                                            sequences=[path_rev])
-            ret = theano.dot(self.R, path_ret)
+            n = path_ret.shape[0]
+            ret = path_ret[n - T.arange(n) - 1]
             return ret
 
         @staticmethod
@@ -114,7 +107,7 @@ class segmenter(object):
             get viterbi scores and path
             """
             [score, path], upd = theano.scan(fn=self.trans,
-                                             outputs_info=[T.zeros_like(outputs[0]), self.startnode],
+                                             outputs_info=[self.seg.startstate, None],
                                              sequences=[outputs],
                                              non_sequences=self.seg.params['A'])
 
@@ -127,16 +120,16 @@ class segmenter(object):
             outputs = self.setlayers(inputs)
             out = self.viterbi(outputs)
             dif = theano.tensor.neq(ans, out)
-            aS = theano.tensor.sum(outputs[theano.tensor.arange(outputs.shape[0]), ans] * dif)
-            oS = theano.tensor.sum(outputs[theano.tensor.arange(outputs.shape[0]), out] * dif)
-            itr = (dif > 0).nonzero()
-            itr = itr(itr.nonzero())
-            transdif = theano.tensor.sum(self.seg.params['A'][itr-1, itr])
+            itr = dif.nonzero()[0]  # element-indexes which satisfy dif[idx]==1
+            aS = theano.tensor.sum(outputs[itr, ans[itr]])
+            oS = theano.tensor.sum(outputs[itr, out[itr]])
+            transdif_a = T.sum(self.seg.params['A'][ans[itr-1], ans[itr]])
+            transdif_o = T.sum(self.seg.params['A'][out[itr-1], out[itr]])
             self.viterbi_path = out
             self.count = T.sum(self.seg.X[out, ans])
-            return (aS - oS, transdif)
+            return (aS - oS, transdif_a - transdif_o)
 
-    # class init
+    #######
     def __init__(self,
                  HL=300,
                  OL=4,
@@ -147,22 +140,28 @@ class segmenter(object):
                  iter=10,
                  initupper=0.01,
                  batchsize=20,
+                 viterbi_startnode=3,
                  alfa=0.02,
                  hid_act="tanh",
                  out_act="softmax"):
         """
         """
+        # set arguments to self.*
         args = locals()
         args.pop("self")
         self.__dict__.update(args)
-
+        #
         self.IL = char_d * N
         self.alfa = numpy.float32(alfa)
-
+        arr = numpy.array([1 if i==viterbi_startnode else -1 for i in range(OL)])
+        # special constant shared variable
+        self.startstate = theano.shared(arr.astype(FLOAT))
+        self.NULL = theano.shared(numpy.array(-1).astype("int64"))
+        self.ZERO = theano.shared(numpy.array(0).astype(FLOAT))
         self.params = OrderedDict()
         self.params_v = OrderedDict()
         self.idxs = T.lvector('idxs')
-
+        # compile networks
         self.setparams(chardiclen, char_d)
         self.set_batch_networks()
 
@@ -171,7 +170,7 @@ class segmenter(object):
         idx1 = self.datas_idx[idx][1].astype("int64")
         idx2 = self.datas_idx[idx][2].astype("int64")
         idx3 = self.datas_idx[idx][3].astype("int64")
-        return (self.data[idx0:idx1], self.data_ans[idx2:idx3])
+        return (self.data[idx0:idx1].astype("int64"), self.data_ans[idx2:idx3].astype("int64"))
 
     def setparams(self, chardiclen, char_d):
         def setdata(chardiclen):
@@ -181,13 +180,7 @@ class segmenter(object):
             self.datas_idx = theano.shared(numpy.zeros((self.bufferlen, 4)))
             self.data = theano.shared(numpy.zeros((self.bufferlen, ), dtype="int64"), name="data")
             self.data_ans = theano.shared(numpy.zeros((self.bufferlen,)))
-            idx0 = self.datas_idx[self.idx][0].astype("int64")
-            idx1 = self.datas_idx[self.idx][1].astype("int64")
-            idx2 = self.datas_idx[self.idx][2].astype("int64")
-            idx3 = self.datas_idx[self.idx][3].astype("int64")
-            self.inp = self.data[idx0:idx1].astype("int64")
-            self.ans = self.data_ans[idx2:idx3].astype("int64")
-
+            # define the function to put data to gpu memory
             d = T.lvector()
             d_ans = T.lvector()
             d_idx = T.lmatrix()
@@ -251,10 +244,6 @@ class segmenter(object):
         test_upd = [(self.X, self.X + test_g)]
         self.test = theano.function([self.idxs], updates=test_upd)
 
-    @property
-    def system_out(self):
-        return theano.function([self.idxs], [net.viterbi_path for net in self.nets])
-
     def replacedata(self, inputdata, anslist):
         """
         copy data to gpu memory
@@ -298,20 +287,22 @@ class segmenter(object):
             # ans : tag index list of a sequence answer
         return: -
         """
+        null = self.NULL.get_value()
         def learn_(buflen):
             L = range(buflen)
-            for x in xrange(buflen / self.batchsize):
+            for x in range(int(round(1.0 * buflen / self.batchsize))):
                 start = x * self.batchsize
                 end = (x + 1) * self.batchsize
                 if end > buflen:
+                    emplen = end - buflen
                     end = buflen
-                self.learn(L[start:end])
-                """
+                    L_ = L[start:end] + [null for i in range(emplen)]
+                else:
+                    self.learn(L[start:end])
                 # for  debug
                 out = self.system_out(L[start:end])
                 for o in out:
                     print o
-                """
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
