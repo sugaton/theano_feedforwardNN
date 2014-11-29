@@ -12,7 +12,6 @@ class segmenter(object):
         def __init__(self, seg, idx, N=5):
             self.seg = seg
             i, a = self.seg.getdata(idx)
-            self.ans = a
             netS, tranS = self.setnet(i, a, N)
             # if idx == NULL
             cond = T.eq(self.seg.NULL, idx)
@@ -28,8 +27,8 @@ class segmenter(object):
             return self.count
 
         @property
-        def ans_out(self):
-            return (self.ans, self.viterbi_path)
+        def sys_out(self):
+            return self.viterbi_path
 
         def lookup(self, C, inp):
             result, updates = theano.scan(fn=lambda x: C[x],
@@ -223,7 +222,6 @@ class segmenter(object):
         trans_S = []
         match_count = []
         sys_out = []
-        ans_s = []
         for i in xrange(self.batchsize):
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
             ns, ts = self.nets[i].Scores
@@ -231,8 +229,7 @@ class segmenter(object):
             net_S.append(ns)
             trans_S.append(ts)
             match_count.append(self.nets[i].count)
-            a_, o_ = self.nets[i].ans_out
-            ans_s.append(a_)
+            o_ = self.nets[i].sys_out
             sys_out.append(o_)
         # transition score updates
         trans_p = [self.params["A"]]
@@ -245,7 +242,7 @@ class segmenter(object):
         # training function
         upd = trans_upd + net_upd
         self.learn = theano.function([self.idxs], updates=upd)
-        self.learn_with_out = theano.function([self.idxs], [ans_s, sys_out], updates=upd)
+        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -305,13 +302,15 @@ class segmenter(object):
                     L_ = L[start:end] + [null for i in range(emplen)]
                     # self.learn(L_)
                     outs = self.learn_with_out(L_)
+                    anss = [self.getdata(i)[1] for i in L_]
                 else:
                     # self.learn(L[start:end])
-                    anss, outs = self.learn_with_out(L[start:end])
+                    outs = self.learn_with_out(L[start:end])
+                    anss = [self.getdata(i)[1] for i in L[start:end]]
                 # for debug
-                for ans, out in zip(anss,outs):
+                for ans, out in zip(anss, outs):
                     print ""
-                    print("ans:", ans)
+                    print("ans:", ans.eval())
                     print("out:", out)
 
         allsize = sum([len(sent) for sent, _ in data])
