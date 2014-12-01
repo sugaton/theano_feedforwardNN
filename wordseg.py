@@ -12,15 +12,11 @@ class segmenter(object):
         def __init__(self, seg, idx, N=5):
             self.seg = seg
             i, a = self.seg.getdata(idx)
-            netS, tranS = self.setnet(i, a, N)
-            # if idx == NULL
-            cond = T.eq(self.seg.NULL, idx)
-            self.netS = ifelse.ifelse(cond, self.seg.ZERO, netS)
-            self.tranS = ifelse.ifelse(cond, self.seg.ZERO, tranS)
+            self.netS, self.tranS = self.setnet(i, a, N)
 
         @property
         def Scores(self):
-            return (self.netS, self.tranS)
+            return [self.netS, self.tranS]
 
         @property
         def count(self):
@@ -157,6 +153,7 @@ class segmenter(object):
         # special constant shared variable
         self.startstate = theano.shared(arr.astype(FLOAT))
         self.NULL = theano.shared(numpy.array(-1).astype("int64"))
+        self.ONE = theano.shared(numpy.array(1).astype(FLOAT))
         self.ZERO = theano.shared(numpy.array(0).astype(FLOAT))
         self.params = OrderedDict()
         self.params_v = OrderedDict()
@@ -223,11 +220,18 @@ class segmenter(object):
         match_count = []
         sys_out = []
         for i in xrange(self.batchsize):
+            cond = T.eq(self.NULL, self.idxs[i])
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
+            # if idxs[i] == NULL, return 0, 0. else return network's scores
+            __,_ = self.nets[i].Scores
+            print __,__.type
+            print self.ZERO, self.ZERO.type
             ns, ts = self.nets[i].Scores
+            flag = ifelse.ifelse(cond, self.ONE, self.ZERO)
+            # ns, ts = ifelse.ifelse(cond, self.nets[i].Scores, [self.ZERO, self.ZERO])
             # append score variables for sum
-            net_S.append(ns)
-            trans_S.append(ts)
+            net_S.append(ns*flag)
+            trans_S.append(ts*flag)
             match_count.append(self.nets[i].count)
             o_ = self.nets[i].sys_out
             sys_out.append(o_)
@@ -300,18 +304,20 @@ class segmenter(object):
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
-                    # self.learn(L_)
-                    outs = self.learn_with_out(L_)
-                    anss = [self.getdata(i)[1] for i in L_]
+                    self.learn(L_)
+                    # outs = self.learn_with_out(L_)
+                    # anss = [self.getdata(i)[1] for i in L_]
                 else:
-                    # self.learn(L[start:end])
-                    outs = self.learn_with_out(L[start:end])
-                    anss = [self.getdata(i)[1] for i in L[start:end]]
+                    self.learn(L[start:end])
+                    # outs = self.learn_with_out(L[start:end])
+                    # anss = [self.getdata(i)[1] for i in L[start:end]]
+                """
                 # for debug
                 for ans, out in zip(anss, outs):
                     print ""
                     print("ans:", ans.eval())
                     print("out:", out)
+                """
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
