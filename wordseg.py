@@ -5,6 +5,7 @@ from collections import OrderedDict
 from theano import ifelse
 
 FLOAT = theano.config.floatX
+IFEL = ifelse.ifelse
 
 
 class segmenter(object):
@@ -138,6 +139,7 @@ class segmenter(object):
                  batchsize=20,
                  viterbi_startnode=3,
                  alfa=0.02,
+                 len_nulldata=3,
                  hid_act="tanh",
                  out_act="softmax"):
         """
@@ -174,16 +176,24 @@ class segmenter(object):
             """
             define datas and give the set function
             """
-            self.datas_idx = theano.shared(numpy.zeros((self.bufferlen, 4)))
-            self.data = theano.shared(numpy.zeros((self.bufferlen, ), dtype="int64"), name="data")
-            self.data_ans = theano.shared(numpy.zeros((self.bufferlen,)))
+            null_ = self.chardiclen
+            SSub = T.set_subtensor
+            nulld_size = self.len_nulldata + (self.N / 2) * 2
+            self.datas_idx = theano.shared(numpy.zeros((self.bufferlen+1, 4)))
+            self.data = theano.shared(numpy.zeros((self.bufferlen + nulld_size,), dtype="int64"), name="data")
+            self.data_ans = theano.shared(numpy.zeros((self.bufferlen+self.len_nulldata,)))
+            # data which is correspond to null input
+            nulld_ = theano.shared(numpy.array([null_ for i in range(nulld_size)]).astype("int64"))
+            nulla_ = theano.shared(numpy.array([self.OL - 1 for i in range(self.len_nulldata)]).astype("int64"))
+            arr = [self.bufferlen, self.bufferlen+nulld_size, self.bufferlen, self.bufferlen+self.len_nulldata]
+            nulli_ = theano.shared(numpy.array(arr).astype("int64"))
             # define the function to put data to gpu memory
             d = T.lvector()
             d_ans = T.lvector()
             d_idx = T.lmatrix()
-            u = (self.data, T.set_subtensor(self.data[:d.shape[0]], d))
-            u_ans = (self.data_ans, T.set_subtensor(self.data_ans[:d_ans.shape[0]], d_ans))
-            u_idx = (self.datas_idx, T.set_subtensor(self.datas_idx[:d_idx.shape[0]], d_idx))
+            u = (self.data, SSub(SSub(self.data[:d.shape[0]], d)[-nulld_.shape[0]:], nulld_))
+            u_ans = (self.data_ans, SSub(SSub(self.data_ans[:d_ans.shape[0]], d_ans)[-nulla_.shape[0]:], nulla_))
+            u_idx = (self.datas_idx, SSub(SSub(self.datas_idx[:d_idx.shape[0]], d_idx)[-1], nulli_))
             self.set = theano.function([d, d_ans, d_idx], updates=[u, u_ans, u_idx])
 
         def setparam(size1, size2=None, name=""):
@@ -202,7 +212,7 @@ class segmenter(object):
         #  transition score
         setparam(self.OL, self.OL, name="A")
         #  set lookup
-        setparam(chardiclen, char_d, name="C")
+        setparam(chardiclen + 1, char_d, name="C")
         #  set weight and bias
         setparam(self.IL, self.HL, name="W1")
         setparam(self.HL, name="b1")
@@ -213,41 +223,38 @@ class segmenter(object):
         """
         construct networks for batch
         """
+        print("setting networks")
         self.X = theano.shared(numpy.zeros((self.OL, self.OL)))
         self.nets = range(self.batchsize)
         net_S = []
         trans_S = []
         match_count = []
         sys_out = []
+        trans_p = [self.params["A"]]
+        net_p = [p for k, p in self.params.items() if k != "A"]
+        print("--setting all networks")
         for i in xrange(self.batchsize):
-            cond = T.eq(self.NULL, self.idxs[i])
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
-            # if idxs[i] == NULL, return 0, 0. else return network's scores
-            __,_ = self.nets[i].Scores
-            print __,__.type
-            print self.ZERO, self.ZERO.type
             ns, ts = self.nets[i].Scores
-            flag = ifelse.ifelse(cond, self.ONE, self.ZERO)
-            # ns, ts = ifelse.ifelse(cond, self.nets[i].Scores, [self.ZERO, self.ZERO])
             # append score variables for sum
-            net_S.append(ns*flag)
-            trans_S.append(ts*flag)
+            net_S.append(ns)
+            trans_S.append(ts)
             match_count.append(self.nets[i].count)
             o_ = self.nets[i].sys_out
             sys_out.append(o_)
+        print("--compiling gradient function")
         # transition score updates
-        trans_p = [self.params["A"]]
         trans_grad = theano.grad(T.sum(trans_S), trans_p)
         trans_upd = [(p, p + self.alfa * g) for p, g in zip(trans_p, trans_grad)]
         # network parameters update
-        net_p = [p for k, p in self.params.items() if k != "A"]
         net_grad = theano.grad(T.sum(net_S), net_p)
         net_upd = [(p, p + self.alfa * g) for p, g in zip(net_p, net_grad)]
         # training function
         upd = trans_upd + net_upd
+        print("--compiling learning, testing function")
         self.learn = theano.function([self.idxs], updates=upd)
         self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
-        #  counting function for test
+        #  counting function for tes
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
         self.test = theano.function([self.idxs], updates=test_upd)
@@ -295,6 +302,7 @@ class segmenter(object):
         return: -
         """
         null = self.NULL.get_value()
+
         def learn_(buflen):
             L = range(buflen)
             for x in range(int(round(1.0 * buflen / self.batchsize))):
