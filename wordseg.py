@@ -142,7 +142,7 @@ class segmenter(object):
                  alfa=0.02,
                  len_nulldata=3,
                  hid_act="tanh",
-                 out_act="softmax"):
+                 out_act="linear"):
         """
         """
         # set arguments to self.*
