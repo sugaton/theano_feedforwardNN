@@ -402,9 +402,9 @@ class segmenter(object):
             self.error_handle(e)
         # calculate F-score
         x = self.X.get_value()
-        precision = numpy.average([(x[i] / sum(x[i]) if sum(x[i]) != 0 else 0) for i in range(self.OL)])
-        recall = numpy.average([(x[i] / sum(x.t[i]) if sum(x.t[i]) != 0 else 0) for i in range(self.OL)])
         print x
+        precision = numpy.average([(x[i] / sum(x[i]) if sum(x[i]) != 0 else 0) for i in range(self.OL)])
+        recall = numpy.average([(x[i] / sum(x.t[i]) if sum(x.T[i]) != 0 else 0) for i in range(self.OL)])
         return (2 * precision * recall) / (recall + precision)
 
     def load_param(self, filename):
