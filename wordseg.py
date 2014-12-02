@@ -115,6 +115,7 @@ class segmenter(object):
             embeddings = self.lookup(self.seg.params['C'], inp)
             inputs = self.makeinputs(N, inp, embeddings)
             outputs = self.setlayers(inputs)
+            self.outputs = outputs
             out = self.viterbi(outputs)
             dif = theano.tensor.neq(ans, out)
             itr = dif.nonzero()[0]  # element-indexes which satisfy dif[idx]==1
@@ -196,8 +197,7 @@ class segmenter(object):
             u_idx = (self.datas_idx, SSub(SSub(self.datas_idx[:d_idx.shape[0]], d_idx)[-1], nulli_))
             self.set = theano.function([d, d_ans, d_idx], updates=[u, u_ans, u_idx])
 
-        def setparam(size1, size2=None, name=""):
-            upper = self.initupper
+        def setparam(size1, size2=None, upper=self.initupper, name=""):
             if size2 is None:
                 shape = (size1)
                 variable = T.vector()
@@ -244,16 +244,18 @@ class segmenter(object):
             sys_out.append(o_)
         print("--compiling gradient function")
         # transition score updates
-        trans_grad = theano.grad(T.sum(trans_S), trans_p)
+        transg = [theano.grad(S, trans_p) for S in trans_S]
+        trans_grad = [sum([transg[i][j] for i in range(len(transg))]) for j in range(len(trans_p))]
         trans_upd = [(p, p + self.alfa * g) for p, g in zip(trans_p, trans_grad)]
         # network parameters update
-        net_grad = theano.grad(T.sum(net_S), net_p)
+        net_grad = [theano.grad(T.sum(net_S), p) for p in net_p]
         net_upd = [(p, p + self.alfa * g) for p, g in zip(net_p, net_grad)]
         # training function
         upd = trans_upd + net_upd
         print("--compiling learning, testing function")
         self.learn = theano.function([self.idxs], updates=upd)
-        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], [sys_out], updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], [sys_out[0],debug, debug2], updates=upd)
         #  counting function for tes
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -287,6 +289,7 @@ class segmenter(object):
         print idxarr.shape
         self.set(datarr, ansdata, idxarr)
         return len(idxarr)
+
     def error_handle(self, e):
         print "error:"
         print "type:", str(type(e))
@@ -319,13 +322,10 @@ class segmenter(object):
                     self.learn(L[start:end])
                     # outs = self.learn_with_out(L[start:end])
                     # anss = [self.getdata(i)[1] for i in L[start:end]]
-                """
                 # for debug
-                for ans, out in zip(anss, outs):
-                    print ""
-                    print("ans:", ans.eval())
-                    print("out:", out)
-                """
+                # for ans, out in zip(anss, outs):
+                    # print ""
+                    # print("out:", out)
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
