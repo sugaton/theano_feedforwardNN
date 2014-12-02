@@ -224,7 +224,7 @@ class segmenter(object):
         construct networks for batch
         """
         print("setting networks")
-        self.X = theano.shared(numpy.zeros((self.OL, self.OL)))
+        self.X = theano.shared(numpy.ones((self.OL, self.OL)))
         self.nets = range(self.batchsize)
         net_S = []
         trans_S = []
@@ -369,15 +369,20 @@ class segmenter(object):
 
         return: F-score
         """
+
         def acc_(buflen):
+            null = self.NULL.get_value()
             L = range(buflen)
             for x in xrange(buflen / self.batchsize):
                 start = x * self.batchsize
                 end = (x + 1) * self.batchsize
                 if end > buflen:
+                    emplen = end - buflen
                     end = buflen
-                acc_(range(buflen)[start:end])
-                self.test(L[start:end])
+                    L_ = L[start:end] + [null for i in range(emplen)]
+                    self.test(L_)
+                else:
+                    self.test(L[start:end])
 
         inputbuf = []
         ansbuf = []
@@ -401,7 +406,7 @@ class segmenter(object):
         except Exception as e:
             self.error_handle(e)
         # calculate F-score
-        x = self.X.get_value()
+        x = self.X.get_value()[:] - 1
         print x
         precision = numpy.average([(x[i] / sum(x[i]) if sum(x[i]) != 0 else 0) for i in range(self.OL)])
         recall = numpy.average([(x[i] / sum(x.t[i]) if sum(x.T[i]) != 0 else 0) for i in range(self.OL)])
