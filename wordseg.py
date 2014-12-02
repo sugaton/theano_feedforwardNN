@@ -254,7 +254,7 @@ class segmenter(object):
         upd = trans_upd + net_upd
         print("--compiling learning, testing function")
         self.learn = theano.function([self.idxs], updates=upd)
-        self.learn_with_out = theano.function([self.idxs], [sys_out], updates=upd)
+        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], [sys_out[0],debug, debug2], updates=upd)
         #  counting function for tes
         test_g = theano.grad(T.sum(match_count), self.X)
@@ -420,6 +420,12 @@ class segmenter(object):
             setfunc[key] = theano.function([variable], updates=[sets])
         for key, arr in npzfile.items():
             setfunc[key](arr)
+
+    def load_lookup(self, arr):
+        v = self.params_v["C"]
+        p = self.params["C"]
+        setfunc = theano.function([v], updates=[(p, T.set_subtensor(p[:], v))])
+        setfunc(arr)
 
     def write_(self, filename):
         dic = {}
