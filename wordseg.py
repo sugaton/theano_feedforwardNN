@@ -403,7 +403,7 @@ class segmenter(object):
                     anss = [self.getdata(i)[1] for i in L[start:end]]
                 # for debug
                 for out in outs:
-                    print outs
+                    print out
                     print ""
                 # for ans, out in zip(anss, outs):
                 # for g1, g2 in zip(outs[:5],outs[5:]):
