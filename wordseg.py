@@ -3,6 +3,7 @@ import numpy
 import theano
 from collections import OrderedDict
 from theano import ifelse
+import math
 
 FLOAT = theano.config.floatX
 IFEL = ifelse.ifelse
@@ -12,12 +13,13 @@ class segmenter(object):
     class network:
         def __init__(self, seg, idx, N=5):
             self.seg = seg
+            self.estimation = self.seg.estimation
             i, a = self.seg.getdata(idx)
-            self.netS, self.tranS = self.setnet(i, a, N)
+            self.setnet(i, a, N)
 
         @property
         def Scores(self):
-            return [self.netS, self.tranS]
+            return self.scores
 
         @property
         def count(self):
@@ -51,6 +53,7 @@ class segmenter(object):
                                    outputs_info=None,
                                    sequences=[T.arange(n, sent_len-n)],
                                    non_sequences=[embeddings, N])
+            self.layers.append(ret)
             return ret
 
         @staticmethod
@@ -75,6 +78,8 @@ class segmenter(object):
                 a = theano.dot(inputl, w) + b
                 activate = self.getfunc(act)
                 o = activate(a)
+                self.layers.append(a)
+                self.layers.append(o)
                 return o
 
             l1 = setL(inputl, name1="W1", name2="b1", act=self.seg.hid_act)
@@ -107,15 +112,13 @@ class segmenter(object):
                                              outputs_info=[self.seg.startstate, None],
                                              sequences=[outputs],
                                              non_sequences=self.seg.params['A'])
-
             maxscore, maxarg = T.max_and_argmax(score[-1])
             return self.trace_back_(path, maxarg)
 
-        def setnet(self, inp, ans, N):
-            embeddings = self.lookup(self.seg.params['C'], inp)
-            inputs = self.makeinputs(N, inp, embeddings)
-            outputs = self.setlayers(inputs)
-            self.outputs = outputs
+        def _collins_estimation(self, outputs, ans):
+            """
+            following collins 2002's approach
+            """
             out = self.viterbi(outputs)
             dif = theano.tensor.neq(ans, out)
             itr = dif.nonzero()[0]  # element-indexes which satisfy dif[idx]==1
@@ -123,9 +126,63 @@ class segmenter(object):
             oS = theano.tensor.sum(outputs[itr, out[itr]])
             transdif_a = T.sum(self.seg.params['A'][ans[itr-1], ans[itr]])
             transdif_o = T.sum(self.seg.params['A'][out[itr-1], out[itr]])
-            self.viterbi_path = out
-            self.count = T.sum(self.seg.X[out, ans])
             return (aS - oS, transdif_a - transdif_o)
+
+        def _collobert_estimation(self, outputs, ans):
+            """
+            following collobert 2011's approach
+            """
+            def logadd(outputs):
+                """
+                logadd
+                """
+                def log_sum_exp(x_t_1, W):
+                    return T.log(T.sum(T.exp(x_t_1 + W.T), axis=1))
+
+                score, upd = theano.scan(fn=lambda x_t, x_t_1, W: x_t + log_sum_exp(x_t_1, W),
+                                         outputs_info=[self.seg.startstate],
+                                         sequences=[outputs],
+                                         non_sequences=self.seg.params['A'])
+                return T.log(T.sum(T.exp(score[-1])))
+
+            def ans_score(ans, outputs):
+                arr = T.arange(ans.shape[0])
+                sum1 = T.sum(outputs[arr, ans])
+                arr = T.arange(ans.shape[0] - 1)
+                st = self.seg.params["A"][self.seg.viterbi_startnode, ans[0]]
+                sum2 = T.sum(self.seg.params["A"][ans[arr], ans[arr + 1]]) + st
+                return sum1 + sum2
+
+            return ans_score(ans, outputs) - logadd(outputs)
+
+        def setnet(self, inp, ans, N):
+            embeddings = self.lookup(self.seg.params['C'], inp)
+            self.layers = []
+            inputs = self.makeinputs(N, inp, embeddings)
+            outputs = self.setlayers(inputs)
+            self.outputs = outputs
+            if self.estimation == "collins":
+                self.netS, self.tranS = self._collins_estimation(outputs, ans)
+                self.scores = (self.netS, self.tranS)
+            else:
+                self.scores = self._collobert_estimation(outputs, ans)
+            self.viterbi_path = self.viterbi(outputs)
+            self.count = T.sum(self.seg.X[self.viterbi_path, ans])
+
+        def get_gradients(self):
+            dot = theano.dot
+            _dO = theano.grad(self.netS, self.outputs)
+            _b2 = T.sum(_dO, axis=0)
+            H = self.layers[-3]
+            _dW2 = dot(H.T, _dO)
+            _dH = dot(_dO, self.seg.params["W2"].T)
+            I = self.layers[0]
+            _dA = _dH * (H - H * H)
+            _b1 = T.sum(_dA, axis=0)
+            _dW1 = dot(I.T, _dA)
+            _I = dot(_dA, self.seg.params["W1"].T)
+            _C = theano.grad(T.sum(I * _I), self.seg.params["C"])
+            return [_C, _dW1, _b1, _dW2, _b2]
 
     #######
     def __init__(self,
@@ -136,12 +193,13 @@ class segmenter(object):
                  char_d=50,
                  N=5,
                  iter=10,
-                 initupper=0.01,
+                 initupper=0.001,
                  batchsize=20,
                  viterbi_startnode=3,
+                 estimation="collobert",
                  alfa=0.02,
                  len_nulldata=3,
-                 hid_act="tanh",
+                 hid_act="sigmoid",
                  out_act="linear"):
         """
         """
@@ -151,8 +209,9 @@ class segmenter(object):
         self.__dict__.update(args)
         #
         self.IL = char_d * N
+        self.OL = OL + 1
         self.alfa = numpy.float32(alfa)
-        arr = numpy.array([1 if i==viterbi_startnode else -1 for i in range(OL)])
+        arr = numpy.array([1 if i==viterbi_startnode else -1 for i in range(self.OL)])
         # special constant shared variable
         self.startstate = theano.shared(arr.astype(FLOAT))
         self.NULL = theano.shared(numpy.array(-1).astype("int64"))
@@ -210,7 +269,7 @@ class segmenter(object):
 
         setdata(chardiclen)
         #  transition score
-        setparam(self.OL, self.OL, name="A")
+        setparam(self.OL, self.OL, upper=0, name="A")
         #  set lookup
         setparam(chardiclen + 1, char_d, name="C")
         #  set weight and bias
@@ -223,40 +282,58 @@ class segmenter(object):
         """
         construct networks for batch
         """
+        def _collins_grad(scores):
+            trans_p = [self.params["A"]]
+            net_p = [p for k, p in self.params.items() if k != "A"]
+            net_S = [ns for ns, ts in scores]
+            trans_S = [ts for ns, ts in scores]
+            # transition score updates
+            transg = [theano.grad(S, trans_p) for S in trans_S]
+            trans_grad = [sum([transg[i][j] for i in range(len(transg))]) for j in range(len(trans_p))]
+            trans_upd = [(p, p + self.alfa * g) for p, g in zip(trans_p, trans_grad)]
+            # network parameters update
+            netsg = [theano.grad(S, net_p) for S in net_S]
+            net_grad = [sum([netsg[i][j] for i in range(len(netsg))]) for j in range(len(net_p))]
+            # net_grad = [theano.grad(net_S[i], p) for p in net_p]
+            net_upd = [(p, p + self.alfa * g) for p, g in zip(net_p, net_grad)]
+            return trans_upd + net_upd
+
+        def _collobert_grad(scores):
+            def grad_(index, scores):
+                ifnull = [T.zeros_like(p) for p in self.params.values()]
+                g = IFEL(T.eq(self.idxs[index], self.NULL), ifnull, theano.grad(scores[index], self.params.values()))
+                return [T.where(T.isnan(g_), T.zeros_like(g_), g_) for g_ in g]
+            grads = [grad_(i, scores) for i in range(self.batchsize)]
+            grad = [sum([grads[i][j] for i in range(self.batchsize)]) for j in range(len(self.params))]
+            upd = [(p, p + self.alfa * g) for p, g in zip(self.params.values(), grad)]
+            return upd
+
         print("setting networks")
         self.X = theano.shared(numpy.ones((self.OL, self.OL)))
         self.nets = range(self.batchsize)
-        net_S = []
-        trans_S = []
         match_count = []
+        scores = []
         sys_out = []
-        trans_p = [self.params["A"]]
-        net_p = [p for k, p in self.params.items() if k != "A"]
         print("--setting all networks")
         for i in xrange(self.batchsize):
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
-            ns, ts = self.nets[i].Scores
-            # append score variables for sum
-            net_S.append(ns)
-            trans_S.append(ts)
+            scores.append(self.nets[i].Scores)
             match_count.append(self.nets[i].count)
             o_ = self.nets[i].sys_out
             sys_out.append(o_)
+        debug = self.nets[0].outputs
         print("--compiling gradient function")
-        # transition score updates
-        transg = [theano.grad(S, trans_p) for S in trans_S]
-        trans_grad = [sum([transg[i][j] for i in range(len(transg))]) for j in range(len(trans_p))]
-        trans_upd = [(p, p + self.alfa * g) for p, g in zip(trans_p, trans_grad)]
-        # network parameters update
-        net_grad = [theano.grad(T.sum(net_S), p) for p in net_p]
-        net_upd = [(p, p + self.alfa * g) for p, g in zip(net_p, net_grad)]
-        # training function
-        upd = trans_upd + net_upd
+        if self.estimation == "collins":
+            upd = _collins_grad(scores)
+        else:
+            upd = _collobert_grad(scores)
         print("--compiling learning, testing function")
+        # training function
         self.learn = theano.function([self.idxs], updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], [debug], updates=upd)
         self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
-        # self.learn_with_out = theano.function([self.idxs], [sys_out[0],debug, debug2], updates=upd)
-        #  counting function for tes
+        #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
         self.test = theano.function([self.idxs], updates=test_upd)
@@ -308,24 +385,37 @@ class segmenter(object):
 
         def learn_(buflen):
             L = range(buflen)
-            for x in range(int(round(1.0 * buflen / self.batchsize))):
+            for x in range(int(math.ceil(1.0 * buflen / self.batchsize))):
                 start = x * self.batchsize
                 end = (x + 1) * self.batchsize
                 if end > buflen:
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
-                    self.learn(L_)
-                    # outs = self.learn_with_out(L_)
-                    # anss = [self.getdata(i)[1] for i in L_]
+                    # self.learn(L_)
+                    outs = self.learn_with_out(L_)
+                    anss = [self.getdata(i)[1] for i in L_]
+                    print L_
                 else:
-                    self.learn(L[start:end])
-                    # outs = self.learn_with_out(L[start:end])
-                    # anss = [self.getdata(i)[1] for i in L[start:end]]
+                    # self.learn(L[start:end])
+                    outs = self.learn_with_out(L[start:end])
+                    anss = [self.getdata(i)[1] for i in L[start:end]]
+                    print L[start:end]
                 # for debug
                 # for ans, out in zip(anss, outs):
+                # for g1, g2 in zip(outs[:5],outs[5:]):
+                    # print g1-g2
                     # print ""
-                    # print("out:", out)
+                print ""
+                print("ans:",anss[0].eval())
+                print self.params["W"].get_value()
+                # print outs
+                # print outs[-1]
+                # for out in outs:
+                     # print("out:", out)
+                     # print out[-1]
+                     # for l in out:
+                         # print l
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
@@ -409,7 +499,7 @@ class segmenter(object):
         x = self.X.get_value()[:] - 1
         print x
         precision = numpy.average([(x[i] / sum(x[i]) if sum(x[i]) != 0 else 0) for i in range(self.OL)])
-        recall = numpy.average([(x[i] / sum(x.t[i]) if sum(x.T[i]) != 0 else 0) for i in range(self.OL)])
+        recall = numpy.average([(x[i] / sum(x.T[i]) if sum(x.T[i]) != 0 else 0) for i in range(self.OL)])
         return (2 * precision * recall) / (recall + precision)
 
     def load_param(self, filename):
