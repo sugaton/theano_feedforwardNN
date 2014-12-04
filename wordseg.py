@@ -1,4 +1,5 @@
 import theano.tensor as T
+import scipy
 import numpy
 import theano
 from collections import OrderedDict
@@ -136,14 +137,16 @@ class segmenter(object):
                 """
                 logadd
                 """
-                def log_sum_exp(x_t_1, W):
-                    return T.log(T.sum(T.exp(x_t_1 + W.T), axis=1))
+                def log_sum_exp(X):
+                    x = X.max()
+                    return x + T.log(T.sum(T.exp(X-x), axis=1))
 
-                score, upd = theano.scan(fn=lambda x_t, x_t_1, W: x_t + log_sum_exp(x_t_1, W),
+                score, upd = theano.scan(fn=lambda x_t, x_t_1, W: x_t + log_sum_exp(x_t_1 + W.T),
                                          outputs_info=[self.seg.startstate],
                                          sequences=[outputs],
                                          non_sequences=self.seg.params['A'])
-                return T.log(T.sum(T.exp(score[-1])))
+                smax = score[-1].max()
+                return smax + T.log(T.sum(T.exp(score[-1] - smax)))
 
             def ans_score(ans, outputs):
                 arr = T.arange(ans.shape[0])
@@ -193,7 +196,7 @@ class segmenter(object):
                  char_d=50,
                  N=5,
                  iter=10,
-                 initupper=0.001,
+                 initupper=1e-04,
                  batchsize=20,
                  viterbi_startnode=3,
                  estimation="collobert",
@@ -306,7 +309,7 @@ class segmenter(object):
             grads = [grad_(i, scores) for i in range(self.batchsize)]
             grad = [sum([grads[i][j] for i in range(self.batchsize)]) for j in range(len(self.params))]
             upd = [(p, p + self.alfa * g) for p, g in zip(self.params.values(), grad)]
-            self.grad = grad[-2]
+            self.grad = theano.grad(scores[0], self.nets[0].outputs)
             return upd
 
         print("setting networks")
@@ -323,7 +326,7 @@ class segmenter(object):
             match_count.append(self.nets[i].count)
             o_ = self.nets[i].sys_out
             sys_out.append(o_)
-            debug.append(self.nets[i].outputs)
+            # debug.append(self.nets[i].outputs)
         print("--compiling gradient function")
         if self.estimation == "collins":
             upd = _collins_grad(scores)
@@ -333,8 +336,9 @@ class segmenter(object):
         # training function
         self.learn = theano.function([self.idxs], updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
-        self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
-        # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -401,23 +405,14 @@ class segmenter(object):
                     # self.learn(L[start:end])
                     outs = self.learn_with_out(L[start:end])
                     anss = [self.getdata(i)[1] for i in L[start:end]]
-                # for debug
-                for out in outs:
-                    print out
-                    print ""
-                # for ans, out in zip(anss, outs):
-                # for g1, g2 in zip(outs[:5],outs[5:]):
-                    # print g1-g2
-                    # print ""
-                # print ""
-                # print("ans:",anss[0].eval())
+                # print anss[0].eval()
                 # print outs
-                # print outs[-1]
                 # for out in outs:
-                     # print("out:", out)
-                     # print out[-1]
-                     # for l in out:
-                         # print l
+                    # print out
+                    # print ""
+                for ans, out in zip(anss, outs):
+                    print("ans", ans.eval())
+                    print("out:", out)
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
@@ -452,6 +447,11 @@ class segmenter(object):
                     learn_(buflen)
                 except Exception as e:
                     self.error_handle(e)
+        print("lookup, C: ")
+        C=self.params["C"].get_value()
+        l0 = C[0]
+        for l in C:
+            print scipy.spatial.distance.cosine(l0, l) - 1
 
     def test_(self, dataset):
         """
