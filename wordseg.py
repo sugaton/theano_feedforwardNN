@@ -392,23 +392,20 @@ class segmenter(object):
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
-                    # self.learn(L_)
-                    outs = self.learn_with_out(L_)
-                    anss = [self.getdata(i)[1] for i in L_]
-                    print L_
+                    self.learn(L_)
+                    # outs = self.learn_with_out(L_)
+                    # anss = [self.getdata(i)[1] for i in L_]
                 else:
-                    # self.learn(L[start:end])
-                    outs = self.learn_with_out(L[start:end])
-                    anss = [self.getdata(i)[1] for i in L[start:end]]
-                    print L[start:end]
+                    self.learn(L[start:end])
+                    # outs = self.learn_with_out(L[start:end])
+                    # anss = [self.getdata(i)[1] for i in L[start:end]]
                 # for debug
                 # for ans, out in zip(anss, outs):
                 # for g1, g2 in zip(outs[:5],outs[5:]):
                     # print g1-g2
                     # print ""
-                print ""
-                print("ans:",anss[0].eval())
-                print self.params["W"].get_value()
+                # print ""
+                # print("ans:",anss[0].eval())
                 # print outs
                 # print outs[-1]
                 # for out in outs:
