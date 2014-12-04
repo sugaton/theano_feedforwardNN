@@ -306,6 +306,7 @@ class segmenter(object):
             grads = [grad_(i, scores) for i in range(self.batchsize)]
             grad = [sum([grads[i][j] for i in range(self.batchsize)]) for j in range(len(self.params))]
             upd = [(p, p + self.alfa * g) for p, g in zip(self.params.values(), grad)]
+            self.grad = grad[-2]
             return upd
 
         print("setting networks")
@@ -314,6 +315,7 @@ class segmenter(object):
         match_count = []
         scores = []
         sys_out = []
+        debug = []
         print("--setting all networks")
         for i in xrange(self.batchsize):
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
@@ -321,7 +323,7 @@ class segmenter(object):
             match_count.append(self.nets[i].count)
             o_ = self.nets[i].sys_out
             sys_out.append(o_)
-        debug = self.nets[0].outputs
+            debug.append(self.nets[i].outputs)
         print("--compiling gradient function")
         if self.estimation == "collins":
             upd = _collins_grad(scores)
@@ -331,8 +333,8 @@ class segmenter(object):
         # training function
         self.learn = theano.function([self.idxs], updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
-        # self.learn_with_out = theano.function([self.idxs], [debug], updates=upd)
-        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -392,14 +394,17 @@ class segmenter(object):
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
-                    self.learn(L_)
-                    # outs = self.learn_with_out(L_)
-                    # anss = [self.getdata(i)[1] for i in L_]
+                    # self.learn(L_)
+                    outs = self.learn_with_out(L_)
+                    anss = [self.getdata(i)[1] for i in L_]
                 else:
-                    self.learn(L[start:end])
-                    # outs = self.learn_with_out(L[start:end])
-                    # anss = [self.getdata(i)[1] for i in L[start:end]]
+                    # self.learn(L[start:end])
+                    outs = self.learn_with_out(L[start:end])
+                    anss = [self.getdata(i)[1] for i in L[start:end]]
                 # for debug
+                for out in outs:
+                    print outs
+                    print ""
                 # for ans, out in zip(anss, outs):
                 # for g1, g2 in zip(outs[:5],outs[5:]):
                     # print g1-g2
