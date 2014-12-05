@@ -336,9 +336,9 @@ class segmenter(object):
         # training function
         self.learn = theano.function([self.idxs], updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
-        # self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
-        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -398,21 +398,22 @@ class segmenter(object):
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
-                    # self.learn(L_)
-                    outs = self.learn_with_out(L_)
-                    anss = [self.getdata(i)[1] for i in L_]
+                    self.learn(L_)
+                    # outs = self.learn_with_out(L_)
+                    # anss = [self.getdata(i)[1] for i in L_]
                 else:
-                    # self.learn(L[start:end])
-                    outs = self.learn_with_out(L[start:end])
-                    anss = [self.getdata(i)[1] for i in L[start:end]]
+                    self.learn(L[start:end])
+                    # outs = self.learn_with_out(L[start:end])
+                    # anss = [self.getdata(i)[1] for i in L[start:end]]
                 # print anss[0].eval()
                 # print outs
                 # for out in outs:
                     # print out
                     # print ""
-                for ans, out in zip(anss, outs):
-                    print("ans", ans.eval())
-                    print("out:", out)
+                # for ans, out in zip(anss, outs):
+                    # print("ans", ans.eval())
+                    # print("out:", out)
+            print("iteration done")
 
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
