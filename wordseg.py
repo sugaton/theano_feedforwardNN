@@ -31,11 +31,13 @@ class segmenter(object):
             return self.viterbi_path
 
         def lookup(self, C, inp):
+            return C[inp]
+            """
             result, updates = theano.scan(fn=lambda x: C[x],
                                           outputs_info=None,
                                           sequences=[inp])
             return result
-
+            """
         @staticmethod
         def slice(i, X, N=5):
             """
@@ -81,10 +83,12 @@ class segmenter(object):
                 o = activate(a)
                 self.layers.append(a)
                 self.layers.append(o)
-                return o
+                return o, a
 
-            l1 = setL(inputl, name1="W1", name2="b1", act=self.seg.hid_act)
-            return setL(l1, name1="W2", name2="b2", act=self.seg.out_act)
+            l1,a = setL(inputl, name1="W1", name2="b1", act=self.seg.hid_act)
+            self.debug1 = l1
+            l2,a = setL(l1, name1="W2", name2="b2", act=self.seg.out_act)
+            return l2
 
         def trace_back_(self, path, maxnode):
             n = path.shape[1]
@@ -218,8 +222,7 @@ class segmenter(object):
         # special constant shared variable
         self.startstate = theano.shared(arr.astype(FLOAT))
         self.NULL = theano.shared(numpy.array(-1).astype("int64"))
-        self.ONE = theano.shared(numpy.array(1).astype(FLOAT))
-        self.ZERO = theano.shared(numpy.array(0).astype(FLOAT))
+        self.biass = {}
         self.params = OrderedDict()
         self.params_v = OrderedDict()
         self.idxs = T.lvector('idxs')
@@ -259,7 +262,7 @@ class segmenter(object):
             u_idx = (self.datas_idx, SSub(SSub(self.datas_idx[:d_idx.shape[0]], d_idx)[-1], nulli_))
             self.set = theano.function([d, d_ans, d_idx], updates=[u, u_ans, u_idx])
 
-        def setparam(size1, size2=None, upper=self.initupper, name=""):
+        def setparam(size1, size2=None, upper=self.initupper, name="", bias=1.):
             if size2 is None:
                 shape = (size1)
                 variable = T.vector()
@@ -269,17 +272,18 @@ class segmenter(object):
             arr = numpy.random.uniform(-upper, upper, shape)
             self.params[name] = theano.shared(arr.astype(FLOAT), name=name)
             self.params_v[name] = variable
+            self.biass[self.params[name]] = numpy.float32(bias)
 
         setdata(chardiclen)
         #  transition score
         setparam(self.OL, self.OL, upper=0, name="A")
         #  set lookup
-        setparam(chardiclen + 1, char_d, name="C")
+        setparam(chardiclen + 1, char_d, name="C", bias=10)
         #  set weight and bias
         setparam(self.IL, self.HL, name="W1")
-        setparam(self.HL, name="b1")
+        setparam(self.HL, upper=0, name="b1", bias=0.)
         setparam(self.HL, self.OL, name="W2")
-        setparam(self.OL, name="b2")
+        setparam(self.OL, upper=0, name="b2", bias=0.1)
 
     def set_batch_networks(self):
         """
@@ -308,8 +312,8 @@ class segmenter(object):
                 return [T.where(T.isnan(g_), T.zeros_like(g_), g_) for g_ in g]
             grads = [grad_(i, scores) for i in range(self.batchsize)]
             grad = [sum([grads[i][j] for i in range(self.batchsize)]) for j in range(len(self.params))]
-            upd = [(p, p + self.alfa * g) for p, g in zip(self.params.values(), grad)]
-            self.grad = theano.grad(scores[0], self.nets[0].outputs)
+            upd = [(p, p + self.alfa * self.biass[p] * g) for p, g in zip(self.params.values(), grad)]
+            self.grad = theano.grad(scores[0], self.nets[0].debug1)
             return upd
 
         print("setting networks")
@@ -318,7 +322,6 @@ class segmenter(object):
         match_count = []
         scores = []
         sys_out = []
-        debug = []
         print("--setting all networks")
         for i in xrange(self.batchsize):
             self.nets[i] = self.network(self, self.idxs[i], N=self.N)
@@ -327,6 +330,7 @@ class segmenter(object):
             o_ = self.nets[i].sys_out
             sys_out.append(o_)
             # debug.append(self.nets[i].outputs)
+        debug = self.nets[0].debug1
         print("--compiling gradient function")
         if self.estimation == "collins":
             upd = _collins_grad(scores)
@@ -336,9 +340,9 @@ class segmenter(object):
         # training function
         self.learn = theano.function([self.idxs], updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
-        self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
-        # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -368,7 +372,7 @@ class segmenter(object):
         ansdata = numpy.array(ansdata).astype('int64')
         idxarr = numpy.array(idxarr).astype('int64')
         print datarr.shape
-        print ansdata.shape
+
         print idxarr.shape
         self.set(datarr, ansdata, idxarr)
         return len(idxarr)
@@ -387,6 +391,7 @@ class segmenter(object):
             # ans : tag index list of a sequence answer
         return: -
         """
+        C_0 = self.params["C"].get_value()
         null = self.NULL.get_value()
 
         def learn_(buflen):
@@ -398,15 +403,15 @@ class segmenter(object):
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
-                    self.learn(L_)
-                    # outs = self.learn_with_out(L_)
-                    # anss = [self.getdata(i)[1] for i in L_]
+                    # self.learn(L_)
+                    outs = self.learn_with_out(L_)
+                    anss = [self.getdata(i)[1] for i in L_]
                 else:
-                    self.learn(L[start:end])
-                    # outs = self.learn_with_out(L[start:end])
-                    # anss = [self.getdata(i)[1] for i in L[start:end]]
-                # print anss[0].eval()
-                # print outs
+                    # self.learn(L[start:end])
+                    outs = self.learn_with_out(L[start:end])
+                    anss = [self.getdata(i)[1] for i in L[start:end]]
+                print anss[0].eval()
+                print outs
                 # for out in outs:
                     # print out
                     # print ""
@@ -448,11 +453,6 @@ class segmenter(object):
                     learn_(buflen)
                 except Exception as e:
                     self.error_handle(e)
-        print("lookup, C: ")
-        C=self.params["C"].get_value()
-        l0 = C[0]
-        for l in C:
-            print scipy.spatial.distance.cosine(l0, l) - 1
 
     def test_(self, dataset):
         """
