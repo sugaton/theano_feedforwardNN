@@ -322,8 +322,10 @@ class segmenter(object):
         #  set weight and bias
         setparam(self.IL, self.HL, name="W1")
         setparam(self.HL, upper=0, name="b1", bias=0.)
+        setparam(self.IL, upper=0, name="b1_", bias=0.)
         setparam(self.HL, self.OL, name="W2")
         setparam(self.OL, upper=0, name="b2", bias=0.1)
+        setparam(self.HL, upper=0, name="b2_", bias=0.1)
         setalfa()
 
     def set_batch_networks(self):
