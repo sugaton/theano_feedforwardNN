@@ -31,8 +31,8 @@ class segmenter(object):
             return self.viterbi_path
 
         @property
-        def pretrain_grad(self):
-            return self.pretraing_grad
+            def pretrain_grad(self):
+                return self.pretraing_grad
 
         def lookup(self, C, inp):
             return C[inp]
@@ -234,7 +234,7 @@ class segmenter(object):
                  initupper=1e-04,
                  batchsize=20,
                  feat_d=0,
-                 pretrain=False,
+                 pretrain="False",
                  viterbi_startnode=3,
                  estimation="collobert",
                  if_debug=False,
@@ -251,7 +251,7 @@ class segmenter(object):
         args.pop("self")
         self.__dict__.update(args)
         #
-        self.IL = (char_d + feat_d) * N
+        self.IL = char_d * N
         self.OL = OL + 1
         self.alfa_ = numpy.float32(alfa_)
         arr = numpy.array([1 if i==viterbi_startnode else -1 for i in range(self.OL)])
@@ -427,7 +427,7 @@ class segmenter(object):
         print "type:", str(type(e))
         print "args:", str(e.args)
 
-    def function_apach_data(self, data, func, iter_=1):
+    def function_apply_data(self, data, func, iter_=1):
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
         if allin:
@@ -498,17 +498,10 @@ class segmenter(object):
                     anss = [self.getdata(i)[1] for i in L_]
                 else:
                     outs = learn(L[start:end])
-                    # outs = self.learn_with_out(L[start:end])
                     anss = [self.getdata(i)[1] for i in L[start:end]]
                 dp(outs, anss)
-                # for out in outs:
-                    # print out
-                    # print ""
-                # for ans, out in zip(anss, outs):
-                    # print("ans", ans.eval())
-                    # print("out:", out)
             print("iteration done")
-        self.function_apach_data(data, learn_, iter_=self.iter)
+        self.function_apply_data(data, learn_, iter_=self.iter)
 
     def test_(self, dataset):
         """
@@ -532,7 +525,7 @@ class segmenter(object):
                 else:
                     self.test(L[start:end])
 
-        self.function_apach_data(dataset, acc_)
+        self.function_apply_data(dataset, acc_)
         # calculate F-score
         x = self.X.get_value()[:] - 1
         print x
