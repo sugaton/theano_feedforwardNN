@@ -97,7 +97,7 @@ class segmenter(object):
         def lossfunc(self, x, z):
             if self.seg.loss == "norm2":
                 err = x-z
-                return T.sqrt(err.T, err)
+                return T.sqrt(T.sum(theano.dot(err.T, err)[T.arange(err.shape[1]), T.arange(err.shape[1])]))
             else:
                 return None
 
