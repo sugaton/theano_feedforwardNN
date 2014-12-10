@@ -30,6 +30,10 @@ class segmenter(object):
         def sys_out(self):
             return self.viterbi_path
 
+        @property
+        def pretrain_grad(self):
+            return self.pretraing_grad
+
         def lookup(self, C, inp):
             return C[inp]
             """
@@ -83,12 +87,37 @@ class segmenter(object):
                 o = activate(a)
                 self.layers.append(a)
                 self.layers.append(o)
-                return o, a
+                return o
 
-            l1,a = setL(inputl, name1="W1", name2="b1", act=self.seg.hid_act)
+            l1 = setL(inputl, name1="W1", name2="b1", act=self.seg.hid_act)
             self.debug1 = l1
-            l2,a = setL(l1, name1="W2", name2="b2", act=self.seg.out_act)
+            l2 = setL(l1, name1="W2", name2="b2", act=self.seg.out_act)
             return l2
+
+        def lossfunc(self, x, z):
+            if self.seg.loss == "norm2":
+                err = x-z
+                return T.sqrt(err.T, err)
+            else:
+                return None
+
+        def _pretraining(self):
+            """
+            return each layer autoencoder's error
+            """
+            def setL(x, name1="w", name2="b", name3="b_", act="sigmoid"):
+                w = self.seg.params[name1]
+                b = self.seg.params[name2]
+                b_ = self.seg.params[name3]
+                activate = self.getfunc(act)
+                y = activate(theano.dot(x, w) + b)
+                z = activate(theano.dot(y, w.T) + b_)
+                return zip([w, b, b_], theano.grad(self.lossfunc(x, z), [w, b, b_]))
+
+            upd1 = setL(self.layers[0], "W1", "b1", "b1_", act=self.seg.hid_act)
+            upd2 = setL(self.layers[1], "W2", "b2", "b2_", act=self.seg.hid_act)
+            alf = self.seg.alfa
+            return [(p, alf[p] * g + p) for p, g in upd1 + upd2]
 
         def trace_back_(self, path, maxnode):
             n = path.shape[1]
@@ -173,6 +202,8 @@ class segmenter(object):
                 self.scores = (self.netS, self.tranS)
             else:
                 self.scores = self._collobert_estimation(outputs, ans)
+            if self.pretrain:
+                self.pretraing_grad = self._pretraining()
             self.viterbi_path = self.viterbi(outputs)
             self.count = T.sum(self.seg.X[self.viterbi_path, ans])
 
@@ -202,9 +233,13 @@ class segmenter(object):
                  iter=10,
                  initupper=1e-04,
                  batchsize=20,
+                 feat_d=0,
                  viterbi_startnode=3,
                  estimation="collobert",
-                 alfa=0.02,
+                 if_debug=False,
+                 loss="norm2",
+                 learning_rate_method="constant",
+                 alfa_=0.02,
                  len_nulldata=3,
                  hid_act="sigmoid",
                  out_act="linear"):
@@ -217,7 +252,7 @@ class segmenter(object):
         #
         self.IL = char_d * N
         self.OL = OL + 1
-        self.alfa = numpy.float32(alfa)
+        self.alfa_ = numpy.float32(alfa_)
         arr = numpy.array([1 if i==viterbi_startnode else -1 for i in range(self.OL)])
         # special constant shared variable
         self.startstate = theano.shared(arr.astype(FLOAT))
@@ -227,7 +262,7 @@ class segmenter(object):
         self.params_v = OrderedDict()
         self.idxs = T.lvector('idxs')
         # compile networks
-        self.setparams(chardiclen, char_d)
+        self.setparams(chardiclen, char_d, feat_d)
         self.set_batch_networks()
 
     def getdata(self, idx):
@@ -237,7 +272,7 @@ class segmenter(object):
         idx3 = self.datas_idx[idx][3].astype("int64")
         return (self.data[idx0:idx1].astype("int64"), self.data_ans[idx2:idx3].astype("int64"))
 
-    def setparams(self, chardiclen, char_d):
+    def setparams(self, chardiclen, char_d, feat_d):
         def setdata(chardiclen):
             """
             define datas and give the set function
@@ -274,16 +309,21 @@ class segmenter(object):
             self.params_v[name] = variable
             self.biass[self.params[name]] = numpy.float32(bias)
 
+        def setalfa():
+            if self.learning_rate_method == "constant":
+                self.alfa = dict([(p, self.alfa_) for p in self.params.values()])
+
         setdata(chardiclen)
         #  transition score
         setparam(self.OL, self.OL, upper=0, name="A")
         #  set lookup
-        setparam(chardiclen + 1, char_d, name="C", bias=10)
+        setparam(chardiclen + 1, char_d + feat_d, name="C", bias=10)
         #  set weight and bias
         setparam(self.IL, self.HL, name="W1")
         setparam(self.HL, upper=0, name="b1", bias=0.)
         setparam(self.HL, self.OL, name="W2")
         setparam(self.OL, upper=0, name="b2", bias=0.1)
+        setalfa()
 
     def set_batch_networks(self):
         """
@@ -297,12 +337,12 @@ class segmenter(object):
             # transition score updates
             transg = [theano.grad(S, trans_p) for S in trans_S]
             trans_grad = [sum([transg[i][j] for i in range(len(transg))]) for j in range(len(trans_p))]
-            trans_upd = [(p, p + self.alfa * g) for p, g in zip(trans_p, trans_grad)]
+            trans_upd = [(p, p + self.alfa[p] * g) for p, g in zip(trans_p, trans_grad)]
             # network parameters update
             netsg = [theano.grad(S, net_p) for S in net_S]
             net_grad = [sum([netsg[i][j] for i in range(len(netsg))]) for j in range(len(net_p))]
             # net_grad = [theano.grad(net_S[i], p) for p in net_p]
-            net_upd = [(p, p + self.alfa * g) for p, g in zip(net_p, net_grad)]
+            net_upd = [(p, p + self.alfa[p] * g) for p, g in zip(net_p, net_grad)]
             return trans_upd + net_upd
 
         def _collobert_grad(scores):
@@ -312,7 +352,7 @@ class segmenter(object):
                 return [T.where(T.isnan(g_), T.zeros_like(g_), g_) for g_ in g]
             grads = [grad_(i, scores) for i in range(self.batchsize)]
             grad = [sum([grads[i][j] for i in range(self.batchsize)]) for j in range(len(self.params))]
-            upd = [(p, p + self.alfa * self.biass[p] * g) for p, g in zip(self.params.values(), grad)]
+            upd = [(p, p + self.alfa[p] * self.biass[p] * g) for p, g in zip(self.params.values(), grad)]
             self.grad = theano.grad(scores[0], self.nets[0].debug1)
             return upd
 
@@ -338,7 +378,7 @@ class segmenter(object):
             upd = _collobert_grad(scores)
         print("--compiling learning, testing function")
         # training function
-        self.learn = theano.function([self.idxs], updates=upd)
+        self.learn = theano.function([self.idxs], None, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
@@ -346,7 +386,7 @@ class segmenter(object):
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
-        self.test = theano.function([self.idxs], updates=test_upd)
+        self.test = theano.function([self.idxs], sys_out, updates=test_upd)
 
     def replacedata(self, inputdata, anslist):
         """
@@ -382,55 +422,18 @@ class segmenter(object):
         print "type:", str(type(e))
         print "args:", str(e.args)
 
-    def training(self, data):
-        """
-        training parameters from data
-
-        given: data -- [(sent, ans), ...]
-            # sent: character index list of a sentence
-            # ans : tag index list of a sequence answer
-        return: -
-        """
-        C_0 = self.params["C"].get_value()
-        null = self.NULL.get_value()
-
-        def learn_(buflen):
-            L = range(buflen)
-            for x in range(int(math.ceil(1.0 * buflen / self.batchsize))):
-                start = x * self.batchsize
-                end = (x + 1) * self.batchsize
-                if end > buflen:
-                    emplen = end - buflen
-                    end = buflen
-                    L_ = L[start:end] + [null for i in range(emplen)]
-                    self.learn(L_)
-                    # outs = self.learn_with_out(L_)
-                    # anss = [self.getdata(i)[1] for i in L_]
-                else:
-                    self.learn(L[start:end])
-                    # outs = self.learn_with_out(L[start:end])
-                    # anss = [self.getdata(i)[1] for i in L[start:end]]
-                #print anss[0].eval()
-                #print outs
-                # for out in outs:
-                    # print out
-                    # print ""
-                # for ans, out in zip(anss, outs):
-                    # print("ans", ans.eval())
-                    # print("out:", out)
-            print("iteration done")
-
+    def function_apach_data(self, data, func, iter_=1):
         allsize = sum([len(sent) for sent, _ in data])
         allin = (allsize < self.bufferlen)
         if allin:
             inputbuf = [sent for sent, _ in data]
             ansbuf = [ans for _, ans in data]
             buflen = self.replacedata(inputbuf, ansbuf)
-            for i in range(self.iter):
-                learn_(buflen)
+            for i in range(iter_):
+                func(buflen)
         # if data can't be set on gpu memory once
         else:
-            for i in range(self.iter):
+            for i in range(iter_):
                 buffersum = 0
                 inputbuf = []
                 ansbuf = []
@@ -438,7 +441,7 @@ class segmenter(object):
                     if (len(sent) + buffersum) > self.bufferlen:
                         buflen = self.replacedata(inputbuf, ansbuf)
                         try:
-                            learn_(buflen)
+                            func(buflen)
                         except Exception as e:
                             self.error_handle(e)
                         inputbuf = [sent]
@@ -450,9 +453,57 @@ class segmenter(object):
                         buffersum += len(sent)
                 buflen = self.replacedata(inputbuf, ansbuf)
                 try:
-                    learn_(buflen)
+                    func(buflen)
                 except Exception as e:
                     self.error_handle(e)
+
+    @staticmethod
+    def debug_print(outs, anss):
+        print anss[0].eval()
+        print outs
+
+    def training(self, data):
+        """
+        training parameters from data
+
+        given: data -- [(sent, ans), ...]
+            # sent: character index list of a sentence
+            # ans : tag index list of a sequence answer
+        return: -
+        """
+        null = self.NULL.get_value()
+        if self.if_debug:
+            learn = self.learn_with_out
+            dp = self.debug_print
+        else:
+            learn = self.learn
+            dp = lambda x, y: None
+
+        def learn_(buflen):
+
+            L = range(buflen)
+            for x in range(int(math.ceil(1.0 * buflen / self.batchsize))):
+                start = x * self.batchsize
+                end = (x + 1) * self.batchsize
+                if end > buflen:
+                    emplen = end - buflen
+                    end = buflen
+                    L_ = L[start:end] + [null for i in range(emplen)]
+                    outs = learn(L_)
+                    anss = [self.getdata(i)[1] for i in L_]
+                else:
+                    outs = learn(L[start:end])
+                    # outs = self.learn_with_out(L[start:end])
+                    anss = [self.getdata(i)[1] for i in L[start:end]]
+                dp(outs, anss)
+                # for out in outs:
+                    # print out
+                    # print ""
+                # for ans, out in zip(anss, outs):
+                    # print("ans", ans.eval())
+                    # print("out:", out)
+            print("iteration done")
+        self.function_apach_data(data, learn_, iter_=self.iter)
 
     def test_(self, dataset):
         """
@@ -462,7 +513,6 @@ class segmenter(object):
 
         return: F-score
         """
-
         def acc_(buflen):
             null = self.NULL.get_value()
             L = range(buflen)
@@ -477,27 +527,7 @@ class segmenter(object):
                 else:
                     self.test(L[start:end])
 
-        inputbuf = []
-        ansbuf = []
-        buffersum = 0
-        for sent, ans in dataset:
-            if (len(sent) + buffersum) > self.bufferlen:
-                buflen = self.replacedata(inputbuf, ansbuf)
-                try:
-                    acc_(buflen)
-                except Exception as e:
-                    self.error_handle(e)
-                inputbuf = [sent]
-                ansbuf = [ans]
-                buffersum = len(sent)
-            else:
-                inputbuf.append(sent)
-                ansbuf.append(ans)
-        buflen = self.replacedata(inputbuf, ansbuf)
-        try:
-            acc_(buflen)
-        except Exception as e:
-            self.error_handle(e)
+        self.function_apach_data(dataset, acc_)
         # calculate F-score
         x = self.X.get_value()[:] - 1
         print x
@@ -518,6 +548,13 @@ class segmenter(object):
             setfunc[key] = theano.function([variable], updates=[sets])
         for key, arr in npzfile.items():
             setfunc[key](arr)
+
+    def load_feat(self, arr):
+        v = self.params_v["C"]
+        p = self.params["C"]
+        upd = [(p, T.set_subtensor(p[:, -self.feat_d:], v))]
+        setfunc = theano.function([v], updates=upd)
+        setfunc(arr)
 
     def load_lookup(self, arr):
         v = self.params_v["C"]
