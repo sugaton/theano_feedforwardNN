@@ -31,8 +31,8 @@ class segmenter(object):
             return self.viterbi_path
 
         @property
-            def pretrain_grad(self):
-                return self.pretraing_grad
+        def pretrain_upd(self):
+            return self.pretraing_grad
 
         def lookup(self, C, inp):
             return C[inp]
@@ -356,7 +356,7 @@ class segmenter(object):
                 g = IFEL(T.eq(self.idxs[index], self.NULL), ifnull, theano.grad(scores[index], self.params.values()))
                 return [T.where(T.isnan(g_), T.zeros_like(g_), g_) for g_ in g]
             grads = [grad_(i, scores) for i in range(self.batchsize)]
-            grad = [sum([grads[i][j] for i in range(self.batchsize)]) for j in range(len(self.params))]
+            grad = [sum([grads[i][j] for i in range(self.batchsize)]) / self.batchsize for j in range(len(self.params))]
             upd = [(p, p + self.alfa[p] * self.biass[p] * g) for p, g in zip(self.params.values(), grad)]
             self.grad = theano.grad(scores[0], self.nets[0].debug1)
             return upd
@@ -498,6 +498,7 @@ class segmenter(object):
                     anss = [self.getdata(i)[1] for i in L_]
                 else:
                     outs = learn(L[start:end])
+                    # outs = self.learn_with_out(L[start:end])
                     anss = [self.getdata(i)[1] for i in L[start:end]]
                 dp(outs, anss)
             print("iteration done")
