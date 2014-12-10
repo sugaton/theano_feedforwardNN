@@ -234,7 +234,7 @@ class segmenter(object):
                  initupper=1e-04,
                  batchsize=20,
                  feat_d=0,
-                 pretrain="False",
+                 pretrain=False,
                  viterbi_startnode=3,
                  estimation="collobert",
                  if_debug=False,
@@ -251,7 +251,7 @@ class segmenter(object):
         args.pop("self")
         self.__dict__.update(args)
         #
-        self.IL = char_d * N
+        self.IL = (char_d + feat_d) * N
         self.OL = OL + 1
         self.alfa_ = numpy.float32(alfa_)
         arr = numpy.array([1 if i==viterbi_startnode else -1 for i in range(self.OL)])
