@@ -234,7 +234,7 @@ class segmenter(object):
                  initupper=1e-04,
                  batchsize=20,
                  feat_d=0,
-                 pretrain="False",
+                 pretrain=False,
                  viterbi_startnode=3,
                  estimation="collobert",
                  if_debug=False,
