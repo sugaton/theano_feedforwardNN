@@ -202,7 +202,7 @@ class segmenter(object):
                 self.scores = (self.netS, self.tranS)
             else:
                 self.scores = self._collobert_estimation(outputs, ans)
-            if self.pretrain:
+            if self.seg.pretrain:
                 self.pretraing_grad = self._pretraining()
             self.viterbi_path = self.viterbi(outputs)
             self.count = T.sum(self.seg.X[self.viterbi_path, ans])
@@ -234,6 +234,7 @@ class segmenter(object):
                  initupper=1e-04,
                  batchsize=20,
                  feat_d=0,
+                 pretrain="False",
                  viterbi_startnode=3,
                  estimation="collobert",
                  if_debug=False,
