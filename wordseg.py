@@ -131,11 +131,7 @@ class segmenter(object):
 
         @staticmethod
         def trans(X, prior, W):
-            def maxpath(pri, W):
-                res = pri + W.T
-                return T.max_and_argmax(res, axis=1)
-
-            maxi = maxpath(prior, W)
+            maxi = T.max_and_argmax(prior + W.T, axis=1)
             return [maxi[0] + X, maxi[1]]
 
         def viterbi(self, outputs):
@@ -174,10 +170,10 @@ class segmenter(object):
                     x = X.max()
                     return x + T.log(T.sum(T.exp(X-x), axis=1))
 
-                score, upd = theano.scan(fn=lambda x_t, x_t_1, W: x_t + log_sum_exp(x_t_1 + W.T),
-                                         outputs_info=[self.seg.startstate],
-                                         sequences=[outputs],
-                                         non_sequences=self.seg.params['A'])
+                score, _ = theano.scan(fn=lambda x_t, x_t_1, W: x_t + log_sum_exp(x_t_1 + W.T),
+                                       outputs_info=[self.seg.startstate],
+                                       sequences=[outputs],
+                                       non_sequences=self.seg.params['A'])
                 smax = score[-1].max()
                 return smax + T.log(T.sum(T.exp(score[-1] - smax)))
 
@@ -384,8 +380,8 @@ class segmenter(object):
         # training function
         self.learn = theano.function([self.idxs], None, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
-        # self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
-        self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], T.sum(scores) / len(scores), updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
@@ -501,7 +497,8 @@ class segmenter(object):
                     outs = learn(L[start:end])
                     # outs = self.learn_with_out(L[start:end])
                     anss = [self.getdata(i)[1] for i in L[start:end]]
-                dp(outs, anss)
+                print "error:", outs
+                # dp(outs, anss)
             print("iteration done")
         self.function_apply_data(data, learn_, iter_=self.iter)
 
