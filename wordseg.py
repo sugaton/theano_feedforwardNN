@@ -374,8 +374,7 @@ class segmenter(object):
             match_count.append(self.nets[i].count)
             o_ = self.nets[i].sys_out
             sys_out.append(o_)
-            # debug.append(self.nets[i].outputs)
-        debug = self.nets[0].debug1
+        debug = self.nets[0].outputs
         print("--compiling gradient function")
         if self.estimation == "collins":
             upd = _collins_grad(scores)
@@ -386,8 +385,8 @@ class segmenter(object):
         self.learn = theano.function([self.idxs], None, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], scores, updates=upd)
-        # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
-        self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
+        self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
+        # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
         test_g = theano.grad(T.sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
@@ -464,8 +463,10 @@ class segmenter(object):
 
     @staticmethod
     def debug_print(outs, anss):
-        print anss[0].eval()
-        print outs
+        for out, ans in zip(outs, anss):
+            print ans.eval()
+            print out
+            print ""
 
     def training(self, data):
         """
@@ -512,6 +513,12 @@ class segmenter(object):
 
         return: F-score
         """
+        null = self.NULL.get_value()
+        if self.if_debug:
+            dp = self.debug_print
+        else:
+            dp = lambda x, y: None
+
         def acc_(buflen):
             null = self.NULL.get_value()
             L = range(buflen)
@@ -522,9 +529,12 @@ class segmenter(object):
                     emplen = end - buflen
                     end = buflen
                     L_ = L[start:end] + [null for i in range(emplen)]
-                    self.test(L_)
+                    outs = self.test(L_)
+                    anss = [self.getdata(i)[1] for i in L_]
                 else:
-                    self.test(L[start:end])
+                    outs = self.test(L[start:end])
+                    anss = [self.getdata(i)[1] for i in L[start:end]]
+                dp(outs, anss)
 
         self.function_apply_data(dataset, acc_)
         # calculate F-score
