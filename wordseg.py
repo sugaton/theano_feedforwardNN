@@ -514,10 +514,7 @@ class segmenter(object):
         return: F-score
         """
         null = self.NULL.get_value()
-        if self.if_debug:
-            dp = self.debug_print
-        else:
-            dp = lambda x, y: None
+        dp = self.debug_print
 
         def acc_(buflen):
             null = self.NULL.get_value()
