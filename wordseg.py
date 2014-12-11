@@ -318,16 +318,16 @@ class segmenter(object):
         #  transition score
         setparam(self.OL, self.OL, upper=0, name="A")
         #  set lookup
-        setparam(chardiclen + 1, char_d + feat_d, name="C", bias=10)
+        setparam(chardiclen + 1, char_d + feat_d, name="C")
         #  set weight and bias
         setparam(self.IL, self.HL, name="W1")
-        setparam(self.HL, upper=0, name="b1", bias=0.)
+        setparam(self.HL, upper=0, name="b1")
         if self.pretrain:
-            setparam(self.IL, upper=0, name="b1_", bias=0.)
+            setparam(self.IL, upper=0, name="b1_")
         setparam(self.HL, self.OL, name="W2")
-        setparam(self.OL, upper=0, name="b2", bias=0.1)
+        setparam(self.OL, upper=0, name="b2")
         if self.pretrain:
-            setparam(self.HL, upper=0, name="b2_", bias=0.1)
+            setparam(self.HL, upper=0, name="b2_")
         setalfa()
 
     def set_batch_networks(self):
