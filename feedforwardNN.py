@@ -2,71 +2,104 @@ import theano
 import math
 import numpy
 from collections import OrderedDict
+from collections import namedtuple
 FLOAT = theano.config.floatX
 
 
 class feedforwardNN(object):
-    def __init__(self, IL=100, HL=20, OL=5, iter=2, hid_act="tanh", out_act="linear"):
-        self.IL = IL
-        self.HL = HL
-        self.OL = OL
-        self.iter = iter
-        self.alfa = 0.008
-        arr = numpy.random.randn(HL, IL) / numpy.sqrt(HL + IL)
-        self.W1 = theano.shared(arr.astype(FLOAT), name='W1')
-        arr = numpy.random.randn(OL, HL) / numpy.sqrt(HL + OL)
-        self.W2 = theano.shared(arr.astype(FLOAT), name='W2')
-        self.params = {"W1": self.W1, "W2": self.W2}
+    def __init__(self, IL=100, HL=20, OL=5, iter=2, alfa=0.08, hid_act="tanh", out_act="linear"):
+        # set argments to self.*
+        args = locals()
+        args.pop("self")
+        self.__dict__.update(args)
+        #
+        self.alfa = numpy.float32(alfa)
+        self._params = {}
+        self.setparameters(self._parameters())
 
-        self.inp = theano.tensor.dvector('inp')
-        self.ans = theano.tensor.dvector('ans')
-        hA = self.getfunc(hid_act)
-        oA = self.getfunc(out_act)
-        self.hid = hA(theano.dot(self.W1, self.inp))
-        self.out = oA(theano.dot(self.W2, self.hid))
-        self.E = self.Cost()
-        self.gradients = self.set_grad()
-        self.comp = theano.function([self.inp, self.ans], self.E, updates=self.gradients)
-        self.comp2 = theano.function([self.inp], self.out)
+        self.inp, self.ans = self.setinput_answer()
+        self.input = self._makeinput()
+        self.answer = self._makeanswer()
+
+        self.setnetwork()
+        E = self._Cost()
+        gradients = theano.grad(E, self._params.values())
+        upd = [(p, p + self.alfa * g) for p, g in zip(self._params.values(), gradients)]
+        self.learn_with_cost = theano.function([self.inp, self.ans], E, updates=upd)
+        self.system_out = theano.function([self.inp], self.out)
+
+    def setparameters(self, param_infos):
+        def setparam(name="", size1=0, size2=0, initupper=0.1, params={}):
+            if size2 is None:
+                arr = numpy.random.uniform(-initupper, initupper, (size1, )).astype(FLOAT)
+            else:
+                arr = numpy.random.uniform(-initupper, initupper, (size1, size2)).astype(FLOAT)
+            params[name] = theano.shared(arr, name=name)
+
+        for pi in param_infos:
+            setparam(name=pi.name, size1=pi.size1, size2=pi.size2, params=self._params)
+
+    def _parameters(self):
+        paramInfo = namedtuple("paramInfo", "name size1 size2")
+        return [paramInfo("W1", self.HL, self.IL),
+                paramInfo("W2", self.OL, self.HL)]
+
+    def setinput_answer(self):
+        return (theano.tensor.vector("inp"), theano.tensor.vector("ans"))
+
+    def _makeinput(self):
+        return self.inp
+
+    def _makeanswer(self):
+        return self.ans
 
     @staticmethod
     def getfunc(st):
         dic = {"tanh": theano.tensor.tanh, "linear": (lambda x: x), "sigmoid": theano.tensor.nnet.sigmoid}
         return dic[st]
 
+    def setnetwork(self):
+        hA = self.getfunc(self.hid_act)
+        oA = self.getfunc(self.out_act)
+        self.hid = hA(theano.dot(self._params["W1"], self.input))
+        self.out = oA(theano.dot(self._params["W2"], self.hid))
+
     def Cost(self):
-        diff = self.ans - self.out
+        diff = self.answer - self.out
         error = theano.dot(diff.T, diff)/2
         return error
 
-    def set_grad(self):
-        ret = OrderedDict()
-        ret[self.W1] = self.W1 + (self.alfa * theano.tensor.grad(self.E, self.W1)).astype(FLOAT)
-        ret[self.W2] = self.W2 + (self.alfa * theano.tensor.grad(self.E, self.W2)).astype(FLOAT)
-        return ret
-
-    def forwardP(self, input, ans):
-        return self.comp(input, ans)
-
     def training(self, dataset):
         for i in range(self.iter):
+            costs = []
             for ans, inp in dataset:
-                self.forwardP(inp, ans)
-
-    def test(self, dataset):
-        print numpy.mean([math.sqrt(2*self.forwardP(inp, ans)) for ans, inp in dataset])
+                costs.append(self.learn_with_cost(inp, ans))
+            print("average error:", sum(costs) / len(dataset))
 
     def test_(self, dataset):
         sum = 0
         for ans, inp in dataset:
-            out = self.comp2(inp)
+            out = self.system_out(inp)
             print ans, out
             sum += sum - out
-        print "average error: ", sum * 1.0 / len(dataset)
+        print("average error: ", sum * 1.0 / len(dataset))
 
     def write_(self, filename):
         dic = {}
-        for key, item in self.params.items():
+        for key, item in self._params.items():
             arr = item.get_value()
             dic[key] = arr
         numpy.savez(filename, **dic)
+
+    @property
+    def params(self):
+        return self._params
+
+    @params.setter
+    def params(self, value):
+        upd = []
+        for k, arr in value.items():
+            p = self._params[k]
+            upd.append((p, theano.tensor.set_subtensor(p[:], arr)))
+        f = theano.function([], updates=upd)
+        f()
