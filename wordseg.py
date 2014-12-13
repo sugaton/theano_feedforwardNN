@@ -11,6 +11,10 @@ IFEL = ifelse.ifelse
 
 
 class segmenter(object):
+    class adagrad:
+        def __init__(self, alfa=0.02):
+            self._alfa = alfa
+
     class network:
         def __init__(self, seg, idx, N=5):
             self.seg = seg
@@ -380,7 +384,7 @@ class segmenter(object):
         # training function
         self.learn = theano.function([self.idxs], None, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], self.grad, updates=upd)
-        self.learn_with_out = theano.function([self.idxs], T.sum(scores) / len(scores), updates=upd)
+        self.learn_with_out = theano.function([self.idxs], [T.sum(scores) / len(scores)], updates=upd)
         # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
@@ -484,6 +488,8 @@ class segmenter(object):
         def learn_(buflen):
 
             L = range(buflen)
+            sum_outs = 0
+            c = 0
             for x in range(int(math.ceil(1.0 * buflen / self.batchsize))):
                 start = x * self.batchsize
                 end = (x + 1) * self.batchsize
@@ -497,9 +503,11 @@ class segmenter(object):
                     outs = learn(L[start:end])
                     # outs = self.learn_with_out(L[start:end])
                     anss = [self.getdata(i)[1] for i in L[start:end]]
-                print "error:", outs
+                sum_outs += outs
+                c += 1
                 # dp(outs, anss)
             print("iteration done")
+            print "error:", sum_outs / c
         self.function_apply_data(data, learn_, iter_=self.iter)
 
     def test_(self, dataset):
