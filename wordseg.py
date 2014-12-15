@@ -12,8 +12,32 @@ IFEL = ifelse.ifelse
 
 class segmenter(object):
     class adagrad:
-        def __init__(self, alfa=0.02):
+        def __init__(self, gtype, alfa=0.02, ifreset=False, countmax=100):
             self._alfa = alfa
+            self._gradsum = T.ones_like(gtype)
+            self._gradsum_init = T.ones_like(gtype)
+            # parameters for resetting _grad_sum
+            self._ifreset = ifreset
+            self._counter = 0
+            self._countmax = countmax
+
+        def getupdate(self, grad):
+            self._gradsum += grad * grad
+            alf = self._alfa * T.sqrt(self._gradsum)
+            # if _grad_sum will be reseted
+            if self._ifreset:
+                self._counter += 1
+                if self._counter > self._countmax:
+                    self._counter = 0
+                    self._gradsum = self._gradsum_init
+            return alf * grad
+
+    class constant_alfa:
+        def __init__(self, alfa):
+            self._alfa = alfa
+
+        def getupdate(self, grad):
+            return self._alfa * grad
 
     class network:
         def __init__(self, seg, idx, N=5):
@@ -312,7 +336,9 @@ class segmenter(object):
 
         def setalfa():
             if self.learning_rate_method == "constant":
-                self.alfa = dict([(p, self.alfa_) for p in self.params.values()])
+                self.alfa = dict([(p, self.constant_alfa(self.alfa_)) for p in self.params.values()])
+            elif self.learning_rate_method == "adagrad":
+                self.alfa = dict([(p, self.adagrad(p, self.alfa_)) for p in self.params.values()])
 
         setdata(chardiclen)
         #  transition score
@@ -342,12 +368,12 @@ class segmenter(object):
             # transition score updates
             transg = [theano.grad(S, trans_p) for S in trans_S]
             trans_grad = [sum([transg[i][j] for i in range(len(transg))]) for j in range(len(trans_p))]
-            trans_upd = [(p, p + self.alfa[p] * g) for p, g in zip(trans_p, trans_grad)]
+            trans_upd = [(p, p + self.alfa[p].getupdate(g)) for p, g in zip(trans_p, trans_grad)]
             # network parameters update
             netsg = [theano.grad(S, net_p) for S in net_S]
             net_grad = [sum([netsg[i][j] for i in range(len(netsg))]) for j in range(len(net_p))]
             # net_grad = [theano.grad(net_S[i], p) for p in net_p]
-            net_upd = [(p, p + self.alfa[p] * g) for p, g in zip(net_p, net_grad)]
+            net_upd = [(p, p + self.alfa[p].getupdate(g)) for p, g in zip(net_p, net_grad)]
             return trans_upd + net_upd
 
         def _collobert_grad(scores):
@@ -357,7 +383,7 @@ class segmenter(object):
                 return [T.where(T.isnan(g_), T.zeros_like(g_), g_) for g_ in g]
             grads = [grad_(i, scores) for i in range(self.batchsize)]
             grad = [sum([grads[i][j] for i in range(self.batchsize)]) / self.batchsize for j in range(len(self.params))]
-            upd = [(p, p + self.alfa[p] * self.biass[p] * g) for p, g in zip(self.params.values(), grad)]
+            upd = [(p, p + self.alfa[p].getupdate(g)) for p, g in zip(self.params.values(), grad)]
             self.grad = theano.grad(scores[0], self.nets[0].debug1)
             return upd
 
@@ -378,6 +404,7 @@ class segmenter(object):
         print("--compiling gradient function")
         if self.estimation == "collins":
             upd = _collins_grad(scores)
+            scores = [n + a for n, a in scores]
         else:
             upd = _collobert_grad(scores)
         print("--compiling learning, testing function")
