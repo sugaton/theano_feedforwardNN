@@ -535,6 +535,7 @@ class segmenter(object):
                 # dp(outs, anss)
             print("iteration done")
             print "error:", sum_outs / c
+
         self.function_apply_data(data, learn_, iter_=self.iter)
 
     def test_(self, dataset):
