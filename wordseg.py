@@ -23,7 +23,7 @@ class segmenter(object):
 
         def getupdate(self, grad):
             self._gradsum += grad * grad
-            alf = self._alfa * T.sqrt(self._gradsum)
+            alf = self._alfa / T.sqrt(self._gradsum)
             # if _grad_sum will be reseted
             if self._ifreset:
                 self._counter += 1
@@ -367,11 +367,11 @@ class segmenter(object):
             trans_S = [ts for ns, ts in scores]
             # transition score updates
             transg = [theano.grad(S, trans_p) for S in trans_S]
-            trans_grad = [sum([transg[i][j] for i in range(len(transg))]) for j in range(len(trans_p))]
+            trans_grad = [sum([transg[i][j] for i in range(len(transg))]) / self.batchsize for j in range(len(trans_p))]
             trans_upd = [(p, p + self.alfa[p].getupdate(g)) for p, g in zip(trans_p, trans_grad)]
             # network parameters update
             netsg = [theano.grad(S, net_p) for S in net_S]
-            net_grad = [sum([netsg[i][j] for i in range(len(netsg))]) for j in range(len(net_p))]
+            net_grad = [sum([netsg[i][j] for i in range(len(netsg))]) / self.batchsize for j in range(len(net_p))]
             # net_grad = [theano.grad(net_S[i], p) for p in net_p]
             net_upd = [(p, p + self.alfa[p].getupdate(g)) for p, g in zip(net_p, net_grad)]
             return trans_upd + net_upd
@@ -415,8 +415,9 @@ class segmenter(object):
         # self.learn_with_out = theano.function([self.idxs], debug, updates=upd)
         # self.learn_with_out = theano.function([self.idxs], sys_out, updates=upd)
         #  counting function for test
-        test_g = theano.grad(T.sum(match_count), self.X)
+        test_g = theano.grad(sum(match_count), self.X)
         test_upd = [(self.X, self.X + test_g)]
+        # self.test = theano.function([self.idxs], sys_out, updates=test_upd)
         self.test = theano.function([self.idxs], sys_out, updates=test_upd)
 
     def replacedata(self, inputdata, anslist):
@@ -530,7 +531,7 @@ class segmenter(object):
                     outs = learn(L[start:end])
                     # outs = self.learn_with_out(L[start:end])
                     anss = [self.getdata(i)[1] for i in L[start:end]]
-                sum_outs += outs
+                sum_outs += outs[0]
                 c += 1
                 # dp(outs, anss)
             print("iteration done")
