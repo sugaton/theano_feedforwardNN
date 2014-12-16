@@ -1,4 +1,4 @@
-from feedforwardNN import feedforwardNN
+from mlp import mlp
 import theano
 from collections import namedtuple
 
@@ -6,17 +6,21 @@ FLOAT = theano.config.floatX
 T = theano.tensor
 
 
-class network(feedforwardNN):
+class network(mlp):
     def __init__(self, char_d=50, N=5, wordsize=0, **args):
+        args = locals()
+        args.pop("self")
+        args.pop("args")
+        self.__dict__.update(args)
         super(network, self).__init__(**args)
 
     def _parameters(self):
         paramInfo = namedtuple("paramInfo", "name size1 size2")
-        return [paramInfo("W1", self.HL, self.IL),
-                paramInfo("b1", self.HL, None),
-                paramInfo("W2", self.OL, self.HL),
-                paramInfo("b2", self.OL),
-                paramInfo("L", self.wordsize, self.char_d)]
+        return [paramInfo("W1", self.HL, self.IL, self.initupper),
+                paramInfo("b1", self.HL, None, 0),
+                paramInfo("W2", self.OL, self.HL, self.initupper),
+                paramInfo("b2", self.OL, 0),
+                paramInfo("L", self.wordsize, self.char_d, self.initupper)]
 
     def setinput_answer(self):
         return (T.lvector("inp"), T.vector('ans'))
