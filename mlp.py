@@ -17,7 +17,7 @@ class mlp(object):
         self._params = {}
         self.setparameters(self._parameters())
 
-        self.inp, self.ans = self.setinput_answer()
+        self.inp, self.ans, func_input = self.setinput_answer()
         self.input = self._makeinput()
         self.answer = self._makeanswer()
 
@@ -25,7 +25,7 @@ class mlp(object):
         E = self._Cost()
         gradients = theano.grad(E, self._params.values())
         upd = [(p, p + self.alfa * g) for p, g in zip(self._params.values(), gradients)]
-        self.learn_with_cost = theano.function([self.inp, self.ans], E, updates=upd)
+        self.learn_with_cost = theano.function(func_input, [E], updates=upd)
         self.system_out = theano.function([self.inp], self.out)
 
     def setparameters(self, param_infos):
@@ -45,7 +45,8 @@ class mlp(object):
                 paramInfo("W2", self.OL, self.HL, self.initupper)]
 
     def setinput_answer(self):
-        return (theano.tensor.vector("inp"), theano.tensor.vector("ans"))
+        inp, ans = (theano.tensor.vector("inp"), theano.tensor.vector("ans"))
+        return (inp, ans, [np, ans])
 
     def _makeinput(self):
         return self.inp
